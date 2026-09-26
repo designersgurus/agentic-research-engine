@@ -15,8 +15,10 @@ import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import Settings, get_settings
+from .demos.routes import build_router as build_demo_router
 from .guardrails import validate_public_url
 from .keepalive import KeepAlive
 from .outreach import OutreachService
@@ -78,7 +80,8 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
         response = await call_next(request)
         for k, v in BASE_HEADERS.items():
             response.headers.setdefault(k, v)
-        if request.url.path == "/":
+        is_html = response.headers.get("content-type", "").startswith("text/html")
+        if is_html and not request.url.path.startswith(("/docs", "/redoc")):  # Swagger/ReDoc load their own CDN assets
             response.headers["Content-Security-Policy"] = PAGE_CSP
         return response
 
@@ -102,6 +105,9 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
             raise HTTPException(403, "listing is disabled unless API_KEY is configured")
         if not _key_ok(request, x_api_key):
             raise HTTPException(401, "missing or invalid X-API-Key")
+
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    app.include_router(build_demo_router(s, require_key, require_admin))
 
     # ------------------------------------------------------------------ misc
     @app.get("/", include_in_schema=False)

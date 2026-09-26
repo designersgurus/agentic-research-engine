@@ -15,6 +15,14 @@ It is built with **LangGraph**. Every paid call passes through a budget guard be
 
 **Live demo:** https://agentic-research-engine-mf23.onrender.com · **API docs:** `/docs` (Swagger) · `/redoc`
 
+**More demos in this repo** (all at [/demos](https://agentic-research-engine-mf23.onrender.com/demos)):
+
+| Demo | What it shows | Code |
+|---|---|---|
+| [AI Support Agent](https://agentic-research-engine-mf23.onrender.com/demos/support) | RAG answers with citations, tool calling (order lookup, refund check, human-handoff ticket), slot filling, "no guessing" below a confidence threshold, blocking of prompt injection and card numbers, PII redaction | `app/demos/support.py` |
+| [Document AI Extraction](https://agentic-research-engine-mf23.onrender.com/demos/extract) | Invoices, receipts and POs (text or PDF) → structured JSON/CSV, arithmetic and date validation, auto-approve vs human review | `app/demos/extract.py` |
+| [Web Monitor Automation](https://agentic-research-engine-mf23.onrender.com/demos/monitor) | CSS-selector scraping, snapshot diffing (price, stock, new and removed products), threshold alerts to Slack/email/webhook, price history | `app/demos/monitor.py` |
+
 > The demo is hosted on Render's free tier, so if it has been idle, the first load can take up to a minute.
 
 ## Scope coverage
@@ -31,7 +39,7 @@ Each requirement from a typical agentic-research brief, where it's built, and wh
 | Scheduled, capped follow-ups for unresponsive contacts | `process_due` + APScheduler, server-side cap | Ask for 5 follow-ups → capped at 3 → `closed_no_reply` |
 | FastAPI endpoints and webhooks to sync with a backend | `app/main.py`, HMAC-signed callbacks, inbound webhook | `/docs` |
 | Hard token caps, loop limits, injection sanitization | `app/guardrails.py` | Guardrails tab; token budget 1500 → `budget_exceeded` |
-| Modular codebase, `.env` config, OpenAPI docs | `app/*`, `.env.example`, auto OpenAPI | `/openapi.json`, 31 offline tests |
+| Modular codebase, `.env` config, OpenAPI docs | `app/*`, `.env.example`, auto OpenAPI | `/openapi.json`, 50 offline tests |
 
 ## 2-minute tour
 
@@ -123,7 +131,7 @@ pip install -r requirements-dev.txt   # runtime deps + test tools
 cp .env.example .env          # optional — works without keys
 uvicorn app.main:app --reload
 # open http://localhost:8000  (demo UI)  ·  http://localhost:8000/docs  (Swagger)
-pytest -q                      # 31 tests, all offline
+pytest -q                      # 50 tests, all offline
 ```
 
 ## API

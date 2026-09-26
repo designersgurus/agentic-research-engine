@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document AI Extraction</title>
+<link rel="stylesheet" href="/static/demo.css">
+</head>
+<body>
+<main>
+  <nav class="topnav"><a href="/demos">← All demos</a><span class="sep">|</span><a href="/docs#/demo%3A%20document%20extraction">API</a></nav>
+  <h1>Document AI Extraction</h1>
+  <p class="sub">Turns invoices, receipts and purchase orders into structured data, then <strong>checks the maths</strong> before anything is approved. Clean documents are auto-approved; problems go to a human with the exact reasons.</p>
+
+  <details class="how">
+    <summary>How it works, and what to try</summary>
+    <ol>
+      <li><strong>Extract</strong>: document type, vendor, number, dates, bill-to, currency, line items, subtotal, tax, total, each with a confidence score.</li>
+      <li><strong>Validate</strong>: required fields, qty × price per line, lines add up to subtotal, subtotal + tax = total, tax matches the stated rate, due date after issue date.</li>
+      <li><strong>Decide</strong>: auto-approve, or send to review with reasons. Export as JSON or CSV.</li>
+    </ol>
+    Try <em>Invoice (with errors)</em>: it contains three problems. Or upload your own text-based PDF invoice (up to 2 MB).
+  </details>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>1 · Document</h2>
+      <div class="row" id="samples"></div>
+      <label for="doc">Document text</label>
+      <textarea id="doc" spellcheck="false" wrap="off" maxlength="20000"></textarea>
+      <label for="pdf">…or upload a PDF</label>
+      <input type="file" id="pdf" accept="application/pdf">
+      <div class="row" style="margin-top:12px"><button id="run">Extract &amp; validate</button><span class="status" id="status"></span></div>
+    </section>
+    <section class="card">
+      <h2>2 · Result</h2>
+      <div id="result"><p class="status">Pick a sample or paste a document, then tap <em>Extract &amp; validate</em>.</p></div>
+    </section>
+  </div>
+
+  <section class="card hidden" id="details">
+    <h2>Extracted fields</h2>
+    <div class="scroll-x"><table id="fields"></table></div>
+    <h2 style="margin-top:18px">Line items</h2>
+    <div class="scroll-x"><table id="items"></table></div>
+    <div class="row" style="margin-top:14px"><button class="ghost" id="dlJson">Download JSON</button><button class="ghost" id="dlCsv">Download CSV</button></div>
+  </section>
+  <p class="foot">Sample documents are fictional. In a client build this plugs into email inboxes, upload portals or accounting software, and scanned documents go through OCR first.</p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let last = null, pdfB64 = null;
+
+fetch("/demos/api/extract/samples").then(r => r.json()).then(samples => {
+  $("samples").innerHTML = Object.entries(samples).map(([k, v]) => `<button type="button" class="ghost" data-k="${k}">${esc(v.label)}</button>`).join("");
+  $("samples").querySelectorAll("button").forEach(b => b.onclick = () => { $("doc").value = samples[b.dataset.k].text; pdfB64 = null; $("pdf").value = ""; run(); });
+  $("doc").value = samples.invoice_errors.text;
+});
+
+$("pdf").onchange = () => {
+  const f = $("pdf").files[0]; if (!f) return;
+  if (f.size > 2e6) { $("status").textContent = "PDF must be under 2 MB"; $("pdf").value = ""; return; }
+  const rd = new FileReader();
+  rd.onload = () => { pdfB64 = String(rd.result).split(",")[1]; $("doc").value = `(PDF selected: ${f.name})`; };
+  rd.readAsDataURL(f);
+};
+$("doc").oninput = () => { pdfB64 = null; };
+$("run").onclick = run;
+
+async function run() {
+  $("run").disabled = true; $("status").textContent = "processing…"; $("status").classList.remove("err");
+  try {
+    const body = pdfB64 ? {pdf_base64: pdfB64} : {text: $("doc").value};
+    const r = await fetch("/demos/api/extract", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail?.[0]?.msg || data.detail || r.status);
+    last = data; render(data); $("status").textContent = `engine: ${data.engine}`;
+    if (pdfB64) $("doc").value = data.text;
+  } catch (e) { $("status").textContent = e.message; $("status").classList.add("err"); }
+  $("run").disabled = false;
+}
+
+function badge(c) { return c >= .9 ? `<span class="badge">${c}</span>` : c >= .8 ? `<span class="badge warn">${c}</span>` : c > 0 ? `<span class="badge bad">${c}</span>` : `<span class="badge mute">—</span>`; }
+
+function render(d) {
+  const ok = d.decision.status === "auto_approved";
+  const icon = {pass: '<span class="badge">pass</span>', fail: '<span class="badge bad">fail</span>', skip: '<span class="badge mute">skip</span>'};
+  $("result").innerHTML = `<div class="banner ${ok ? "ok" : "review"}">${ok ? "✓ Auto-approved" : "⚠ Needs human review"}
+      ${d.decision.reasons.length ? `<ul>${d.decision.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}</div>
+    <table>${d.checks.map(c => `<tr><td>${icon[c.status]}</td><td><strong>${esc(c.check)}</strong><br><span class="status">${esc(c.detail)}</span></td></tr>`).join("")}</table>`;
+  const f = d.fields;
+  $("fields").innerHTML = `<tr><th>Field</th><th>Value</th><th>Confidence</th><th class="hide-sm">Source</th></tr>` +
+    Object.entries(f).filter(([k]) => k !== "line_items").map(([k, x]) =>
+      `<tr><td>${esc(k.replace(/_/g, " "))}</td><td>${x.value === null ? '<span class="status">not found</span>' : esc(x.value)}</td><td>${badge(x.confidence)}</td><td class="status hide-sm">${esc(x.source)}</td></tr>`).join("");
+  const items = f.line_items.value || [];
+  $("items").innerHTML = `<tr><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th><th></th></tr>` +
+    (items.length ? items.map(i => { const good = Math.abs(i.quantity * i.unit_price - i.amount) <= .01;
+      return `<tr><td>${esc(i.description)}</td><td class="num">${i.quantity}</td><td class="num">${i.unit_price.toFixed(2)}</td><td class="num">${i.amount.toFixed(2)}</td><td>${good ? "" : `<span class="badge bad">should be ${(i.quantity * i.unit_price).toFixed(2)}</span>`}</td></tr>`; }).join("")
+      : `<tr><td colspan="5" class="status">No line items found</td></tr>`);
+  $("details").classList.remove("hidden");
+}
+
+function download(name, content, type) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([content], {type})); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$("dlJson").onclick = () => last && download("extraction.json", JSON.stringify({data: last.data, checks: last.checks, decision: last.decision}, null, 2), "application/json");
+$("dlCsv").onclick = () => {
+  if (!last) return;
+  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const head = ["document_number", "vendor", "issue_date", "currency", "description", "quantity", "unit_price", "amount"];
+  const rows = (last.data.line_items || []).map(i => [last.data.document_number, last.data.vendor, last.data.issue_date, last.data.currency, i.description, i.quantity, i.unit_price, i.amount]);
+  download("line_items.csv", [head, ...rows].map(r => r.map(q).join(",")).join("\n"), "text/csv");
+};
+</script>
+</body>
+</html>

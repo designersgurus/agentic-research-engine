@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web Monitor Automation</title>
+<link rel="stylesheet" href="/static/demo.css">
+</head>
+<body>
+<main>
+  <nav class="topnav"><a href="/demos">← All demos</a><span class="sep">|</span><a href="/docs#/demo%3A%20web%20monitor">API</a></nav>
+  <h1>Web Monitor Automation</h1>
+  <p class="sub">Watches a competitor's online store, detects price and stock changes, and sends alerts. The "competitor" is <strong>Gadget Hub</strong>, a fictional store served by this demo, with 30 simulated days of real-looking changes.</p>
+
+  <details class="how">
+    <summary>How it works, and what to try</summary>
+    <ol>
+      <li><strong>Scrape</strong>: fetches the store page and reads each product with CSS selectors (name, price, stock).</li>
+      <li><strong>Compare</strong>: diffs against the previous snapshot: price drops and rises, stock-outs, restocks, new and removed products.</li>
+      <li><strong>Alert</strong>: applies your threshold rule, then formats Slack, email and webhook notifications (dry run here).</li>
+    </ol>
+    Tap <em>Next day ▶</em> a few times, or jump to day 30 to see the full price history. Open the competitor page to see exactly what gets scraped.
+  </details>
+
+  <section class="card">
+    <div class="row">
+      <label for="day" style="margin:0">Day</label>
+      <input id="day" type="number" min="1" max="30" value="1" style="width:80px">
+      <label for="thr" style="margin:0 0 0 8px">Alert on price moves ≥</label>
+      <select id="thr" style="width:90px"><option>5</option><option selected>10</option><option>15</option><option>20</option></select><span>%</span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="run">Run check</button>
+      <button class="ghost" id="next">Next day ▶</button>
+      <button class="ghost" id="last">Jump to day 30</button>
+      <a class="btn ghost" id="site" href="/demos/site?day=1" target="_blank" rel="noopener">Open competitor page ↗</a>
+    </div>
+    <p class="status" id="status"></p>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Alerts <span class="status" id="alertCount"></span></h2>
+      <div id="alerts"><p class="status">Run a check to see what changed.</p></div>
+      <h2 style="margin-top:16px">Notification preview <span class="badge mute">dry run</span></h2>
+      <pre class="box" id="slack">—</pre>
+    </section>
+    <section class="card">
+      <h2>All detected changes</h2>
+      <div id="changes"><p class="status">—</p></div>
+      <p class="status" id="schedule" style="margin-top:12px"></p>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Price history (₹)</h2>
+    <div id="chart"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="card">
+    <h2>Scraped this run</h2>
+    <div class="scroll-x"><table id="scraped"></table></div>
+    <p class="status" id="selectors" style="margin-top:10px"></p>
+  </section>
+  <p class="foot">Fictional store. In a client build the same scraper runs on real sites (respecting robots.txt and terms), on a schedule, with alerts to your channels.</p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf", "#8c564b"];
+
+$("run").onclick = check;
+$("next").onclick = () => { $("day").value = Math.min(30, +$("day").value + 1); check(); };
+$("last").onclick = () => { $("day").value = 30; check(); };
+$("thr").onchange = check;
+
+async function check() {
+  const day = Math.max(1, Math.min(30, +$("day").value || 1)); $("day").value = day;
+  $("site").href = `/demos/site?day=${day}`;
+  $("status").textContent = "scraping…"; $("status").classList.remove("err");
+  try {
+    const r = await fetch("/demos/api/monitor/check", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({day, threshold_pct: +$("thr").value})});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail?.[0]?.msg || d.detail || r.status);
+    render(d); $("status").textContent = `Scraped ${d.scraped.length} products from ${d.source_url}`;
+  } catch (e) { $("status").textContent = e.message; $("status").classList.add("err"); }
+}
+
+function render(d) {
+  $("alertCount").textContent = `· day ${d.day} · ${d.alerts.length}`;
+  $("alerts").innerHTML = d.alerts.length ? d.alerts.map(a => `<p style="margin:0 0 8px">${esc(a)}</p>`).join("")
+    : `<p class="status">No alerts today${d.changes.length ? " (changes were below your threshold)" : ""}.</p>`;
+  $("slack").textContent = d.notifications.slack ? `Slack:\n${d.notifications.slack}\n\nEmail subject:\n${d.notifications.email_subject}` : "Nothing to send.";
+  $("changes").innerHTML = d.changes.length ? d.changes.map(c => `<p style="margin:0 0 8px">${esc(c.text)} ${c.alert ? '<span class="badge warn">alert</span>' : '<span class="badge mute">below threshold</span>'}</p>`).join("")
+    : `<p class="status">No changes since yesterday.</p>`;
+  $("schedule").textContent = d.schedule;
+  $("scraped").innerHTML = `<tr><th>SKU</th><th>Product</th><th class="num">Price</th><th>Stock</th></tr>` + d.scraped.map(i =>
+    `<tr><td class="status">${esc(i.sku)}</td><td>${esc(i.name)}</td><td class="num">₹${i.price.toLocaleString("en-IN")}</td><td>${i.in_stock ? '<span class="badge">in stock</span>' : '<span class="badge bad">out</span>'}</td></tr>`).join("");
+  $("selectors").textContent = "CSS selectors: " + Object.entries(d.selectors).map(([k, v]) => `${k} → ${v}`).join(" · ");
+  chart(d.history, d.day);
+}
+
+function chart(history, day) {
+  const W = 600, H = 320, L = 62, R = 10, T = 14, B = 34;
+  const series = Object.values(history);
+  const vals = series.flatMap(s => s.prices.filter(p => p !== null));
+  const min = Math.floor(Math.min(...vals) / 500) * 500, max = Math.ceil(Math.max(...vals) / 500) * 500;
+  const x = i => L + (day === 0 ? 0 : i * (W - L - R) / day), y = v => T + (max - v) * (H - T - B) / (max - min || 1);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Price history" style="display:block">`;
+  for (let v = min; v <= max; v += 500) svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${y(v) + 4}" font-size="15" text-anchor="end" fill="var(--muted)">${v.toLocaleString("en-IN")}</text>`;
+  const step = day > 15 ? 5 : day > 6 ? 2 : 1;
+  for (let i = 0; i <= day; i += step) svg += `<text x="${x(i)}" y="${H - 8}" font-size="15" text-anchor="middle" fill="var(--muted)">d${i}</text>`;
+  series.forEach((s, k) => {
+    let path = "", pen = false;
+    s.prices.forEach((p, i) => { if (p === null) { pen = false; return; } path += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(p).toFixed(1)} `; pen = true; });
+    svg += `<path d="${path}" fill="none" stroke="${COLORS[k % COLORS.length]}" stroke-width="2.6" stroke-linejoin="round"/>`;
+  });
+  $("chart").innerHTML = svg + "</svg>";
+  $("legend").innerHTML = series.map((s, k) => `<span><i style="background:${COLORS[k % COLORS.length]}"></i>${esc(s.name)}</span>`).join("");
+}
+check();
+</script>
+</body>
+</html>

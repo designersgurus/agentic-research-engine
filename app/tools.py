@@ -76,10 +76,8 @@ def _mock_search(query: str, n: int) -> list[dict[str, Any]]:
 MAX_REDIRECTS = 5
 
 
-async def fetch_page(url: str, settings: Settings, budget: Budget) -> dict[str, str]:
-    budget.take_scrape()
-    if MOCK_DOMAIN in url:
-        return _mock_page(url)
+async def fetch_html(url: str, settings: Settings) -> tuple[str, str]:
+    """GET a public page safely: SSRF check on every redirect hop, text/HTML only, size-capped."""
     async with httpx.AsyncClient(
         timeout=settings.http_timeout_s,
         follow_redirects=False,  # redirects are followed manually so every hop is re-validated
@@ -105,9 +103,16 @@ async def fetch_page(url: str, settings: Settings, budget: Budget) -> dict[str, 
                     if size > settings.max_page_bytes:
                         break
                     chunks.append(chunk)
-                html = b"".join(chunks).decode(r.encoding or "utf-8", errors="ignore")
-                return {"url": current, **html_to_text(html)}
+                return current, b"".join(chunks).decode(r.encoding or "utf-8", errors="ignore")
         raise ValueError(f"too many redirects (> {MAX_REDIRECTS})")
+
+
+async def fetch_page(url: str, settings: Settings, budget: Budget) -> dict[str, str]:
+    budget.take_scrape()
+    if MOCK_DOMAIN in url:
+        return _mock_page(url)
+    final_url, html = await fetch_html(url, settings)
+    return {"url": final_url, **html_to_text(html)}
 
 
 def html_to_text(html: str) -> dict[str, str]:
