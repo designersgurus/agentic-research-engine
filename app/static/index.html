@@ -33,6 +33,8 @@ button:disabled{opacity:.5;cursor:wait}
 .msg{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;font-size:14px;white-space:pre-wrap}.msg .meta{font:11.5px var(--mono);color:var(--muted);margin-bottom:6px}
 .contact{padding:12px 0;border-top:1px solid var(--line)}.pill{font:11.5px var(--mono);padding:2px 7px;border-radius:99px;background:var(--accent-soft);color:var(--accent)}
 .pill.closed_no_reply,.pill.opted_out{background:var(--warn-soft);color:var(--warn)}
+.tour{background:var(--accent-soft);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:14px}
+.tour summary{cursor:pointer;font-weight:600}.tour ol{margin:8px 0 2px;padding-left:20px}.tour li{margin:3px 0}
 .hidden{display:none}code{font-family:var(--mono);font-size:13px}.foot{color:var(--muted);font-size:13px;text-align:center;margin-top:24px}.foot a{color:var(--accent)}
 </style>
 </head>
@@ -41,6 +43,18 @@ button:disabled{opacity:.5;cursor:wait}
   <h1>Agentic Research Engine</h1>
   <p class="sub">Parallel research → self-verification loop → cited report → outreach with capped follow-ups.</p>
   <div class="badges" id="badges"></div>
+
+  <details class="tour" open>
+    <summary>2-minute tour: what to try</summary>
+    <ol>
+      <li><strong>Run research</strong> with the defaults. The <em>Verification</em> tab shows pass 1 finding a gap, a follow-up research round, then pass 2 stopping clean.</li>
+      <li>Open <em>Guardrails</em>: token, call and search meters, plus a prompt-injection attempt hidden in a source that was neutralised.</li>
+      <li>Set the token budget to <strong>1500</strong> and run again. The cap stops the job and returns partial results instead of spending more.</li>
+      <li>Create an outreach campaign asking for 5 follow-ups. It's capped at 3. Tap <em>Run follow-ups now</em> until contacts close, or <em>Simulate reply</em> to stop one early.</li>
+      <li>See the full API at <a href="/docs">/docs</a>.</li>
+    </ol>
+    <p class="status" style="margin:6px 0 0">Demo runs in mock mode with synthetic sources, so it's free to try. With API keys, the same pipeline uses live web search and OpenAI or Anthropic models.</p>
+  </details>
 
   <section class="card">
     <h2>1 · Run a research job</h2>

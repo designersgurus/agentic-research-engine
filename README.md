@@ -15,6 +15,47 @@ It is built with **LangGraph**. Every paid call passes through a budget guard be
 
 **Live demo:** https://agentic-research-engine-mf23.onrender.com · **API docs:** `/docs` (Swagger) · `/redoc`
 
+> The demo is hosted on Render's free tier, so if it has been idle, the first load can take up to a minute.
+
+## Scope coverage
+
+Each requirement from a typical agentic-research brief, where it's built, and where to see it working:
+
+| Requirement | Where it's built | Where to see it |
+|---|---|---|
+| Stateful orchestration with loop controls (LangGraph) | `app/research.py` (`build_graph`) | Demo pipeline strip: plan → research ×N → verify → synthesize |
+| Parallel research: sub-tasks, search API, scraping, stored findings | `plan_node`, `research_node` (LangGraph `Send`), `app/tools.py`, `app/store.py` | Report tab, JSON tab (`findings`) |
+| Self-verification: gaps, contradictions, unsupported claims → capped follow-up passes | `verify_node`, `route_after_verify` | Verification tab: pass 1 finds a gap, pass 2 stops clean |
+| Structured, cited markdown reports | `synthesize_node` + citation check | Report tab, `GET /jobs/{id}/report` |
+| Outreach drafts (Email / WhatsApp / SMS) | `app/outreach.py`, `app/channels.py` | Outreach section, channel selector |
+| Scheduled, capped follow-ups for unresponsive contacts | `process_due` + APScheduler, server-side cap | Ask for 5 follow-ups → capped at 3 → `closed_no_reply` |
+| FastAPI endpoints and webhooks to sync with a backend | `app/main.py`, HMAC-signed callbacks, inbound webhook | `/docs` |
+| Hard token caps, loop limits, injection sanitization | `app/guardrails.py` | Guardrails tab; token budget 1500 → `budget_exceeded` |
+| Modular codebase, `.env` config, OpenAPI docs | `app/*`, `.env.example`, auto OpenAPI | `/openapi.json`, 16 offline tests |
+
+## 2-minute tour
+
+**1. Self-verification loop.** The verifier finds a gap and triggers one follow-up research round. Pass 2 then stops clean.
+
+![Verification loop](docs/02-verification.png)
+
+**2. Guardrails and spend.** Every cap is metered. A prompt-injection line planted in one demo source is neutralised before any model sees it.
+
+![Guardrails](docs/03-guardrails.png)
+
+**3. Capped outreach.** The request asked for 5 follow-ups, and the server capped it at 3. Priya replied, so her follow-ups stopped. Arjun didn't reply and was closed after 3.
+
+![Capped outreach](docs/05-outreach-capped.png)
+
+<details>
+<summary><b>4. Cited report</b> (click to expand)</summary>
+
+![Cited report](docs/04-report.png)
+
+</details>
+
+**Try it yourself:** run with defaults, then set the token budget to **1500** to watch the cap return partial results.
+
 ---
 
 ## Architecture
