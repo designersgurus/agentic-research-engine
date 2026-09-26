@@ -82,7 +82,8 @@ def render_site(day: int) -> str:
         ".note{padding:0 16px 16px;color:#666;font-size:13px}</style></head><body>"
         f"<header><strong>{STORE}</strong> · fictional demo store · simulated day {day}</header>"
         f"<main>{rows}</main><p class='note'>This page is a simulated competitor website used to demonstrate "
-        "the web-monitor automation. Products and prices are invented.</p></body></html>"
+        "the web-monitor automation. Products and prices are invented. <a href='/demos/monitor'>← Back to the monitor demo</a> · "
+        "<a href='/'>All demos</a></p></body></html>"
     )
 
 
@@ -167,7 +168,7 @@ def run_check(day: int, threshold_pct: float, base_url: str = "") -> dict[str, A
         "alerts": lines,
         "notifications": {
             "status": "dry_run",
-            "slack": (f"*{STORE} monitor · day {day}* — {len(lines)} alert(s)\n" + "\n".join(f"• {l}" for l in lines))
+            "slack": (f"*{STORE} monitor · day {day}* — {len(lines)} alert(s)\n" + "\n".join(f"• {line}" for line in lines))
             if lines else None,
             "email_subject": f"[Price monitor] {len(lines)} change(s) at {STORE}" if lines else None,
             "webhook": {"event": "monitor.changes", "store": STORE, "day": day, "alerts": alerts} if lines else None,

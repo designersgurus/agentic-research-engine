@@ -14,7 +14,7 @@ Limits that keep it light:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -55,7 +55,7 @@ class KeepAlive:
     def in_active_window(self, now: Optional[datetime] = None) -> bool:
         if not self.hours:
             return True
-        local = (now or datetime.now(timezone.utc)).astimezone(self.tz)
+        local = (now or datetime.now(UTC)).astimezone(self.tz)
         start, end = self.hours
         if start <= end:
             return start <= local.hour < end
@@ -67,7 +67,7 @@ class KeepAlive:
         return (now - self._last_attempt).total_seconds() < BACKOFF_INTERVAL_S
 
     async def tick(self) -> str:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not self.enabled:
             return "disabled"
         if not self.in_active_window(now):

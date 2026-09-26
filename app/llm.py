@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 import httpx
 
@@ -87,6 +88,8 @@ class LLM:
         )
 
     async def _anthropic(self, system: str, user: str, max_tokens: int, json_mode: bool):
+        if not self.s.anthropic_model:
+            raise LLMError("ANTHROPIC_MODEL is not set")
         if json_mode:
             system += "\nRespond with a single valid JSON object and nothing else."
         async with httpx.AsyncClient(timeout=self.s.llm_timeout_s) as client:

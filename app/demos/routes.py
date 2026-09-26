@@ -1,18 +1,21 @@
-"""HTTP routes for the three showcase demos (support agent, document extraction, web monitor)."""
+"""HTTP routes for the demo pages and the showcase demo APIs."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from ..config import Settings
+from ..security import RateLimiter, client_ip
 from ..tools import fetch_html
-from . import extract, monitor, support
+from . import extract, monitor, ocr, support
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
+MAX_UPLOAD_B64 = ocr.MAX_UPLOAD_BYTES * 4 // 3 + 16
 
 
 class ChatTurn(BaseModel):
@@ -27,8 +30,11 @@ class ChatIn(BaseModel):
 
 
 class ExtractIn(BaseModel):
-    text: Optional[str] = Field(None, max_length=extract.MAX_CHARS)
-    pdf_base64: Optional[str] = Field(None, max_length=int(extract.MAX_PDF_BYTES * 1.4))
+    text: Optional[str] = Field(None, max_length=extract.MAX_CHARS, description="Plain-text document")
+    file_base64: Optional[str] = Field(
+        None, max_length=MAX_UPLOAD_B64,
+        description="PDF, PNG, JPEG or WebP (max 5 MB), base64-encoded. Type is detected from the file contents.",
+    )
 
 
 class MonitorIn(BaseModel):
@@ -41,68 +47,89 @@ class MonitorUrlIn(BaseModel):
     selectors: dict[str, str] = Field(default_factory=lambda: dict(monitor.DEFAULT_SELECTORS))
 
 
+def _page(name: str) -> Callable:
+    async def serve() -> FileResponse:
+        return FileResponse(STATIC / name)
+    return serve
+
+
 def build_router(settings: Settings, require_key: Callable, require_admin: Callable) -> APIRouter:
-    r = APIRouter(prefix="/demos")
+    r = APIRouter()
+    ocr_limiter = RateLimiter(limit=8)          # OCR is CPU-heavy: stricter per-IP limit
 
     # ---------------------------------------------------------------- pages
-    for path, page in {"": "demos.html", "/support": "support.html", "/extract": "extract.html",
-                       "/monitor": "monitor.html"}.items():
-        def make(p: str):
-            async def serve():
-                return FileResponse(STATIC / p)
-            return serve
-        r.add_api_route(path or "/", make(page), methods=["GET"], include_in_schema=False)
+    for path, page in {"/": "home.html", "/demos/research": "research.html", "/demos/support": "support.html",
+                       "/demos/extract": "extract.html", "/demos/monitor": "monitor.html"}.items():
+        r.add_api_route(path, _page(page), methods=["GET"], include_in_schema=False)
 
-    @r.get("/site", response_class=HTMLResponse, include_in_schema=False)
-    async def demo_site(day: int = Query(0, ge=0, le=monitor.MAX_DAY)):
-        """The simulated competitor store scraped by the monitor demo."""
+    @r.get("/demos", include_in_schema=False)
+    @r.get("/demos/", include_in_schema=False)
+    async def demos_index() -> RedirectResponse:
+        return RedirectResponse("/", status_code=308)
+
+    @r.get("/demos/site", response_class=HTMLResponse, include_in_schema=False)
+    async def demo_site(day: int = Query(0, ge=0, le=monitor.MAX_DAY)) -> HTMLResponse:
         return HTMLResponse(monitor.render_site(day))
 
     # ---------------------------------------------------------------- support agent
-    @r.post("/api/support/chat", tags=["demo: support agent"], dependencies=[Depends(require_key)])
-    async def support_chat(body: ChatIn):
-        """One turn of the AI support agent (RAG + tools + guardrails). Pass back `pending` for multi-turn slot filling."""
+    @r.post("/demos/api/support/chat", tags=["demo: support agent"], dependencies=[Depends(require_key)])
+    async def support_chat(body: ChatIn) -> dict[str, Any]:
+        """One turn of the support agent (retrieval + tools + guardrails). Pass `pending` back for multi-turn."""
         return await support.chat(body.message, [t.model_dump() for t in body.history], body.pending, settings)
 
     # ---------------------------------------------------------------- document extraction
-    @r.get("/api/extract/samples", tags=["demo: document extraction"])
-    async def extract_samples():
-        return {k: v for k, v in extract.SAMPLES.items()}
+    @r.get("/demos/api/extract/samples", tags=["demo: document extraction"])
+    async def extract_samples() -> dict[str, dict[str, str]]:
+        return extract.SAMPLES
 
-    @r.post("/api/extract", tags=["demo: document extraction"], dependencies=[Depends(require_key)])
-    async def run_extract(body: ExtractIn):
-        """Extract + validate an invoice, receipt or purchase order (plain text or a text-based PDF as base64)."""
-        if body.pdf_base64:
+    @r.post("/demos/api/extract", tags=["demo: document extraction"], dependencies=[Depends(require_key)])
+    async def run_extract(body: ExtractIn, request: Request) -> dict[str, Any]:
+        """Extract and validate an invoice, receipt or purchase order from text, a PDF or a photo.
+
+        Files are processed in memory and never stored.
+        """
+        source, ocr_conf, seconds = "text", None, 0.0
+        if body.file_base64:
+            if not ocr_limiter.allow(client_ip(request)):
+                raise HTTPException(429, "too many uploads; try again in a minute")
             try:
-                text = extract.pdf_to_text(body.pdf_base64)
-            except Exception as exc:  # malformed base64, not a PDF, too big, no text layer
-                raise HTTPException(422, f"could not read PDF: {str(exc)[:120]}")
+                result = await ocr.file_to_text(body.file_base64)
+            except ocr.UnsupportedFile as exc:
+                raise HTTPException(422, str(exc)) from exc
+            except TimeoutError as exc:
+                raise HTTPException(504, "reading the file took too long") from exc
+            except Exception as exc:  # malformed or hostile files must never crash the service
+                raise HTTPException(422, "could not read this file") from exc
+            text, source, ocr_conf, seconds = result.text, result.source, result.ocr_confidence, result.seconds
+            if not text.strip():
+                raise HTTPException(422, "no text found in this file")
         elif body.text and body.text.strip():
             text = body.text
         else:
-            raise HTTPException(422, "provide text or pdf_base64")
-        result = await extract.run_extraction(text, settings)
-        result["text"] = text[: extract.MAX_CHARS]
-        return result
+            raise HTTPException(422, "provide text or file_base64")
+        out = await extract.run_extraction(text, settings, ocr_conf)
+        out.update(text=text[: extract.MAX_CHARS], input={"source": source, "ocr_confidence": ocr_conf,
+                                                            "seconds": round(seconds, 2)})
+        return out
 
     # ---------------------------------------------------------------- web monitor
-    @r.post("/api/monitor/check", tags=["demo: web monitor"], dependencies=[Depends(require_key)])
-    async def monitor_check(body: MonitorIn, request: Request):
-        """Scrape the demo store for `day`, diff against the previous day, and build alerts."""
+    @r.post("/demos/api/monitor/check", tags=["demo: web monitor"], dependencies=[Depends(require_key)])
+    async def monitor_check(body: MonitorIn, request: Request) -> dict[str, Any]:
+        """Scrape the demo store for `day`, compare with the previous day, and build alerts."""
         return monitor.run_check(body.day, body.threshold_pct, str(request.base_url).rstrip("/"))
 
-    @r.post("/api/monitor/check-url", tags=["demo: web monitor"], dependencies=[Depends(require_admin)])
-    async def monitor_check_url(body: MonitorUrlIn):
+    @r.post("/demos/api/monitor/check-url", tags=["demo: web monitor"], dependencies=[Depends(require_admin)])
+    async def monitor_check_url(body: MonitorUrlIn) -> dict[str, Any]:
         """Scrape any public URL with CSS selectors (requires API_KEY; SSRF-protected)."""
         if not body.selectors.get("item"):
             raise HTTPException(422, "selectors.item is required")
-        sel = {**monitor.DEFAULT_SELECTORS, **body.selectors}
+        selectors = {**monitor.DEFAULT_SELECTORS, **body.selectors}
         try:
             final_url, html = await fetch_html(body.url, settings)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(502, f"fetch failed: {str(exc)[:120]}")
-        return {"url": final_url, "items": monitor.scrape(html, sel)}
+            raise HTTPException(502, "could not fetch that page") from exc
+        return {"url": final_url, "items": monitor.scrape(html, selectors)}
 
     return r

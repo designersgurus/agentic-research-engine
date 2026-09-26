@@ -58,7 +58,7 @@ def _mock_search(query: str, n: int) -> list[dict[str, Any]]:
     topic, kind = _split_kind(query)
     second = _KINDS[(_KINDS.index(kind) + 1) % len(_KINDS)]
     out = []
-    for i, k in enumerate([kind, second][: max(1, min(n, 2))]):
+    for k in [kind, second][: max(1, min(n, 2))]:
         label = k.replace("-", " ").title()
         out.append(
             {

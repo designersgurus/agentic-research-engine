@@ -11,14 +11,17 @@
 | Prompt injection from scraped pages or contact notes | Control and bidi characters stripped, instruction-like phrases neutralised, content fenced as `<untrusted_data>`, and a system policy that treats it as data only. Research agents have no access to outreach tools | `sanitize_untrusted`, `wrap_untrusted` |
 | Invented citations | Any `[n]` in the report without a matching collected source is removed. Claims without a valid source are dropped | `synthesize_node`, `research_node` |
 | SSRF via scraping or callbacks | Only http(s). Private, loopback, link-local, reserved, multicast, unspecified and IPv4-mapped addresses are blocked. **Every redirect hop is re-validated** (max 5) | `validate_public_url`, `fetch_page` |
+| Hostile or oversized uploads (document demo) | File type decided by magic bytes, never by name. PDF, PNG, JPEG and WebP only. 5 MB cap, 25-megapixel cap checked before decoding (decompression bombs), 10-page PDF cap. One OCR job at a time with a 45 s timeout, plus a stricter 8/min per-IP limit. Files are processed in memory and never stored | `app/demos/ocr.py`, `app/demos/routes.py` |
+| Internal details leaking in errors | Failed jobs report a generic message (provider errors excepted), with the full error logged server-side. Upload errors never echo parser internals | `app/main.py`, `app/demos/routes.py` |
+| Invisible-character tricks in source or input | Control and bidirectional-override characters are stripped from all untrusted text. Source files contain none; `bandit` checks this (B613) | `CONTROL_RE` in `app/guardrails.py` |
 | Oversized or hostile pages | 2 MB read cap, text/HTML only, 15 s timeout, scripts, iframes and forms stripped | `fetch_page`, `html_to_text` |
 | Flooding and denial of service | Per-IP rate limit on writes (30/min by default, real client IP taken from `CF-Connecting-IP` or the right-most `X-Forwarded-For` entry), job backlog cap (429), concurrency cap | `app/security.py` |
 | Stale personal data | Jobs and campaigns are purged after `DATA_RETENTION_HOURS` (default 24) | `Store.purge_older_than` |
 | Outreach abuse | Dry-run by default. Server-side follow-up cap. STOP / unsubscribe honoured. Address format validated. Channel length limits | `app/outreach.py` |
-| XSS and clickjacking on the demo page | Strict CSP, `X-Frame-Options: DENY`, `nosniff`, HSTS, `no-referrer`. The report is rendered with DOMPurify, or an escape-first fallback renderer | `app/security.py`, `index.html` |
+| XSS and clickjacking on the demo page | Strict CSP, `X-Frame-Options: DENY`, `nosniff`, HSTS, `no-referrer`. The report is rendered with DOMPurify, or an escape-first fallback renderer | `app/security.py`, `app/static/research.html` |
 | Webhook spoofing to your backend | Callbacks are HMAC-SHA256 signed (`X-Signature-256`) with `WEBHOOK_SECRET` | `_callback` |
 | Secrets in the repo | `.env` is git-ignored. Keys are read from the environment only | `.gitignore`, `app/config.py` |
-| Vulnerable dependencies | `pip-audit` is clean. Test tooling is kept out of the production install | `requirements-dev.txt` |
+| Vulnerable dependencies | `pip-audit` is clean (Pillow ≥ 12.3 for its 2026 fixes). Test tooling is kept out of the production install. Static checks: `ruff` (incl. security rules) and `bandit` report 0 issues | `requirements*.txt` |
 
 ## Before going live
 

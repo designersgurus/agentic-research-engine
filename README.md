@@ -13,14 +13,14 @@ It is built with **LangGraph**. Every paid call passes through a budget guard be
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/designersgurus/agentic-research-engine)
 
-**Live demo:** https://agentic-research-engine-mf23.onrender.com · **API docs:** `/docs` (Swagger) · `/redoc`
+**Live demos:** https://agentic-research-engine-mf23.onrender.com · **API docs:** `/docs` (Swagger) · `/redoc`
 
-**More demos in this repo** (all at [/demos](https://agentic-research-engine-mf23.onrender.com/demos)):
+The home page lists four demos. This research engine is the featured one ([open it directly](https://agentic-research-engine-mf23.onrender.com/demos/research)). The other three are in the same codebase:
 
 | Demo | What it shows | Code |
 |---|---|---|
 | [AI Support Agent](https://agentic-research-engine-mf23.onrender.com/demos/support) | RAG answers with citations, tool calling (order lookup, refund check, human-handoff ticket), slot filling, "no guessing" below a confidence threshold, blocking of prompt injection and card numbers, PII redaction | `app/demos/support.py` |
-| [Document AI Extraction](https://agentic-research-engine-mf23.onrender.com/demos/extract) | Invoices, receipts and POs (text or PDF) → structured JSON/CSV, arithmetic and date validation, auto-approve vs human review | `app/demos/extract.py` |
+| [Document AI Extraction](https://agentic-research-engine-mf23.onrender.com/demos/extract) | Invoices, receipts and POs as text, PDF or a **phone photo** (on-device OCR) → structured JSON/CSV, arithmetic and date validation, auto-approve vs human review. Uploads are processed in memory and never stored | `app/demos/extract.py`, `app/demos/ocr.py` |
 | [Web Monitor Automation](https://agentic-research-engine-mf23.onrender.com/demos/monitor) | CSS-selector scraping, snapshot diffing (price, stock, new and removed products), threshold alerts to Slack/email/webhook, price history | `app/demos/monitor.py` |
 
 > The demo is hosted on Render's free tier, so if it has been idle, the first load can take up to a minute.
@@ -39,7 +39,7 @@ Each requirement from a typical agentic-research brief, where it's built, and wh
 | Scheduled, capped follow-ups for unresponsive contacts | `process_due` + APScheduler, server-side cap | Ask for 5 follow-ups → capped at 3 → `closed_no_reply` |
 | FastAPI endpoints and webhooks to sync with a backend | `app/main.py`, HMAC-signed callbacks, inbound webhook | `/docs` |
 | Hard token caps, loop limits, injection sanitization | `app/guardrails.py` | Guardrails tab; token budget 1500 → `budget_exceeded` |
-| Modular codebase, `.env` config, OpenAPI docs | `app/*`, `.env.example`, auto OpenAPI | `/openapi.json`, 50 offline tests |
+| Modular codebase, `.env` config, OpenAPI docs | `app/*`, `.env.example`, auto OpenAPI | `/openapi.json`, 58 offline tests |
 
 ## 2-minute tour
 
@@ -127,12 +127,15 @@ The engine uses several independent layers. If one fails, another still stops th
 ```bash
 git clone https://github.com/designersgurus/agentic-research-engine
 cd agentic-research-engine
-pip install -r requirements-dev.txt   # runtime deps + test tools
-cp .env.example .env          # optional — works without keys
+pip install -r requirements-dev.txt              # runtime deps + test tools
+pip install --no-deps -r requirements-ocr.txt    # OCR engine (see note below)
+cp .env.example .env                             # optional: works without keys
 uvicorn app.main:app --reload
-# open http://localhost:8000  (demo UI)  ·  http://localhost:8000/docs  (Swagger)
-pytest -q                      # 50 tests, all offline
+# open http://localhost:8000 (demos) · http://localhost:8000/docs (Swagger)
+pytest -q                                        # 58 tests, all offline
 ```
+
+The OCR package is installed with `--no-deps` because it declares the desktop build of OpenCV, which needs graphics libraries servers don't have. Its real dependencies, including `opencv-python-headless`, are in `requirements.txt`. Peak memory for a photo upload is about 360 MB, so it fits a 512 MB instance.
 
 ## API
 
@@ -148,6 +151,9 @@ pytest -q                      # 50 tests, all offline
 | `POST` | `/outreach/webhooks/inbound` | Normalised inbound webhook from your email/SMS provider |
 | `POST` | `/outreach/process-due` | Run the follow-up scheduler now (`force=true` for demos) |
 | `GET` | `/health` | Active providers and configured caps |
+| `POST` | `/demos/api/support/chat` | Support agent: one conversation turn |
+| `POST` | `/demos/api/extract` | Document extraction from `text` or `file_base64` (PDF, PNG, JPEG, WebP; max 5 MB) |
+| `POST` | `/demos/api/monitor/check` | Web monitor: scrape, compare and alert for a simulated day |
 
 ```bash
 curl -X POST $URL/jobs -H 'Content-Type: application/json' \
@@ -171,6 +177,7 @@ All settings are environment variables. See [`.env.example`](.env.example) for t
 | `GRAPH_RECURSION_LIMIT` | `40` | LangGraph super-step ceiling |
 | `OUTREACH_DRY_RUN` | `true` | Record messages without sending them |
 | `OUTREACH_MAX_FOLLOWUPS_CAP` | `3` | Server-side ceiling on follow-ups per contact |
+| `ANTHROPIC_MODEL` | *(empty)* | Required when using an Anthropic key: the model id from your Anthropic console |
 
 ## Deploy on Render
 

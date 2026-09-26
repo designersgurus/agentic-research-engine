@@ -1,0 +1,4 @@
+# Installed with --no-deps (see render.yaml / README): the package declares the desktop build
+# of OpenCV, which needs system graphics libraries that servers don't have. Its real runtime
+# dependencies, including the server-friendly opencv-python-headless, are in requirements.txt.
+rapidocr-onnxruntime==1.4.4

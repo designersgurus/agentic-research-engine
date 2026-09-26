@@ -14,7 +14,6 @@ the citation check strips any source number it invents.
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import operator
 import re
@@ -25,17 +24,24 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from ..config import Settings
-from ..guardrails import INJECTION_MARKER, Budget, BudgetExceeded, sanitize_untrusted, wrap_untrusted, UNTRUSTED_POLICY
+from ..guardrails import (
+    INJECTION_MARKER,
+    UNTRUSTED_POLICY,
+    Budget,
+    BudgetExceeded,
+    sanitize_untrusted,
+    wrap_untrusted,
+)
 from ..llm import LLM
 from . import kb
 
 ORDER_RE = re.compile(r"\bNW-?(\d{5})\b", re.IGNORECASE)
+BARE_ORDER_RE = re.compile(r"(?<![\d-])(\d{5})(?![\d-])")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 CARD_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d[\d -]{8,13}\d)(?!\d)")
 STOP = set(
-    "a an the is are was were be to of in on for and or my i me we you your it this that with do does can "
-    "how what when where which who will would should could please hi hello thanks thank there any about".split()
+    ["a", "an", "the", "is", "are", "was", "were", "be", "to", "of", "in", "on", "for", "and", "or", "my", "i", "me", "we", "you", "your", "it", "this", "that", "with", "do", "does", "can", "how", "what", "when", "where", "which", "who", "will", "would", "should", "could", "please", "hi", "hello", "thanks", "thank", "there", "any", "about"]
 )
 CONFIDENCE_THRESHOLD = 0.34
 
@@ -79,7 +85,7 @@ class BM25:
     def search(self, query: str, k: int = 3) -> list[tuple[dict, float, float]]:
         q = tokens(query)
         out = []
-        for doc, dt in zip(self.docs, self.toks):
+        for doc, dt in zip(self.docs, self.toks, strict=True):
             tf = Counter(dt)
             score = sum(
                 self.idf.get(w, 0) * tf[w] * (self.k1 + 1) / (tf[w] + self.k1 * (1 - self.b + self.b * len(dt) / self.avg))
@@ -113,6 +119,7 @@ class SupportState(TypedDict, total=False):
     citations: list[dict[str, Any]]
     confidence: float
     handoff: bool
+    reask: bool
     next_pending: Optional[dict[str, Any]]
 
 
@@ -135,23 +142,50 @@ def guard_node(state: SupportState, config: RunnableConfig) -> dict:
     return {"message": clean, "trace": [{"step": "guard", "detail": f"Input checked · logged as: “{redact(clean)[:120]}”"}]}
 
 
+YES_RE = re.compile(r"^\s*(yes|yeah|yep|sure|ok|okay|please|go ahead)\b", re.I)
+NO_RE = re.compile(r"^\s*(no|nope|nah|not now|no thanks)\b", re.I)
+GREETING_RE = re.compile(r"^\s*(hi|hello|hey|good (morning|afternoon|evening))\b[\s!.]*$", re.I)
+THANKS_RE = re.compile(r"^\s*(thanks|thank you|thx|great|perfect|cool)\b", re.I)
+BYE_RE = re.compile(r"^\s*(bye|goodbye|see you)\b", re.I)
+ROUTE_DETAIL = {
+    "faq": "Knowledge-base question",
+    "order_status": "Order status → needs order-lookup tool",
+    "refund_check": "Refund eligibility → needs order-lookup + policy check",
+    "handoff": "Wants a human → create support ticket",
+    "chitchat": "Small talk → friendly reply, no tools",
+    "decline": "Customer declined the offer",
+    "pickup": "Confirmed return → schedule pickup",
+}
+
+
 def route_node(state: SupportState) -> dict:
     if state.get("blocked"):
         return {"intent": "blocked"}
     msg = state["message"]
     low = msg.lower()
     pending = state.get("pending") or {}
-    m = ORDER_RE.search(msg)
-    order_id = f"NW-{m.group(1)}" if m else pending.get("order_id", "")
+    need = pending.get("need")
+    # A short reply with no question mark answers the agent's last question rather than starting a new topic
+    is_followup = bool(need) and len(msg.split()) <= 4 and "?" not in msg
+
+    m = ORDER_RE.search(msg) or (BARE_ORDER_RE.search(msg) if need == "order_id" else None)
+    order_id = f"NW-{m.group(1)}" if m else ""
     em = EMAIL_RE.search(msg)
     email = em.group(0) if em else ""
+    reask = False
 
-    if pending.get("need") == "order_id" and order_id:
-        intent = pending["intent"]
-    elif pending.get("need") == "email" and email:
+    if need == "order_id" and (order_id or is_followup):
+        intent, reask = pending["intent"], not order_id
+    elif need == "email" and (email or is_followup):
+        intent, reask = "handoff", not email
+    elif need == "confirm_handoff" and YES_RE.match(msg):
         intent = "handoff"
-    elif pending.get("need") == "confirm_handoff" and re.match(r"\s*(yes|yeah|yep|sure|ok|okay|please)\b", low):
-        intent = "handoff"
+    elif need == "confirm_pickup" and YES_RE.match(msg):
+        intent, order_id = "pickup", pending.get("order_id", "")
+    elif need in ("confirm_handoff", "confirm_pickup") and NO_RE.match(msg):
+        intent = "decline"
+    elif GREETING_RE.match(msg) or THANKS_RE.match(msg) or BYE_RE.match(msg):
+        intent = "chitchat"
     elif re.search(r"\b(human|agent|person|someone|complain|complaint|manager|escalate|call me)\b", low):
         intent = "handoff"
     elif re.search(r"\b(refund|return)\b", low) and (order_id or re.search(r"\bmy (order|item)|\bi (want|need) to\b", low)):
@@ -162,18 +196,25 @@ def route_node(state: SupportState) -> dict:
         intent = "order_status"
     else:
         intent = "faq"
-    detail = {"faq": "Knowledge-base question", "order_status": "Order status → needs order-lookup tool",
-              "refund_check": "Refund eligibility → needs order-lookup + policy check",
-              "handoff": "Wants a human → create support ticket"}[intent]
-    if order_id and intent != "faq":
+
+    detail = ROUTE_DETAIL[intent]
+    if reask:
+        detail += " · still missing the requested detail"
+    elif order_id and intent in ("order_status", "refund_check"):
         detail += f" · order {order_id}"
-    return {"intent": intent, "order_id": order_id, "email": email, "trace": [{"step": "route", "detail": detail}]}
+    return {"intent": intent, "order_id": order_id, "email": email, "reask": reask,
+            "trace": [{"step": "route", "detail": detail}]}
 
 
 def act_node(state: SupportState) -> dict:
     intent = state["intent"]
-    if intent == "blocked":
+    if intent in ("blocked", "chitchat", "decline"):
         return {}
+    if intent == "pickup":
+        oid = state["order_id"]
+        ref = "RET-" + hashlib.sha256(oid.encode()).hexdigest()[:6].upper()
+        return {"tool": {"name": "schedule_pickup", "order_id": oid, "reference": ref},
+                "trace": [{"step": "tool", "detail": f"schedule_pickup({oid}) → {ref} (dry run)"}]}
     if intent == "faq":
         hits = INDEX.search(state["message"], k=3)
         passages = [{"n": i + 1, "id": d["id"], "title": d["title"], "text": d["text"], "score": round(s, 2),
@@ -240,12 +281,33 @@ async def respond_node(state: SupportState, config: RunnableConfig) -> dict:
         return {"reply": reply, "confidence": 1.0, "citations": [], "handoff": False, "next_pending": None,
                 "trace": [{"step": "respond", "detail": "Safe refusal"}]}
 
+    if intent == "chitchat":
+        msg = state["message"]
+        reply = ("You're welcome! Anything else I can help with?" if THANKS_RE.match(msg)
+                 else "Goodbye, and thanks for shopping with us!" if BYE_RE.match(msg)
+                 else f"Hi! I can help with {kb.COMPANY} orders, shipping, returns, warranty and payments.")
+        return {"reply": reply, "confidence": 1.0, "citations": [], "handoff": False, "next_pending": None,
+                "trace": [{"step": "respond", "detail": "Friendly reply"}]}
+    if intent == "decline":
+        return {"reply": "No problem. Is there anything else I can help with?", "confidence": 1.0, "citations": [],
+                "handoff": False, "next_pending": None, "trace": [{"step": "respond", "detail": "Offer declined"}]}
+    if intent == "pickup":
+        reply = (f"Done. Pickup for {tool['order_id']} is scheduled for the next business day, return reference "
+                 f"{tool['reference']}. Please keep the item in its original packaging. Your refund will be processed "
+                 "within 5 to 7 business days after inspection.")
+        return {"reply": reply, "confidence": 1.0, "citations": [], "handoff": False, "next_pending": None,
+                "trace": [{"step": "respond", "detail": "Return pickup confirmed"}]}
+
     if tool.get("status") == "missing_order_id":
-        return {"reply": "Sure. What's your order number? It looks like NW-10231.",
+        ask = ("No problem, I just need the order number to look it up. It starts with NW, like NW-10231."
+               if state.get("reask") else "Sure. What's your order number? It looks like NW-10231.")
+        return {"reply": ask,
                 "next_pending": {"need": "order_id", "intent": intent}, "confidence": 1.0, "citations": [],
                 "handoff": False, "trace": [{"step": "respond", "detail": "Asked for order number (slot filling)"}]}
     if tool.get("status") == "missing_email":
-        return {"reply": "I'll connect you with our support team. What email should they reply to?",
+        ask = ("I'll need an email address so the team can reply, for example name@example.com."
+               if state.get("reask") else "I'll connect you with our support team. What email should they reply to?")
+        return {"reply": ask,
                 "next_pending": {"need": "email"}, "confidence": 1.0, "citations": [], "handoff": False,
                 "trace": [{"step": "respond", "detail": "Asked for email (slot filling)"}]}
 
@@ -274,12 +336,14 @@ async def respond_node(state: SupportState, config: RunnableConfig) -> dict:
                     "trace": [{"step": "respond", "detail": "Answered from order system"}]}
         policy_doc = next(d for d in kb.KB_DOCS if d["id"] == "returns")
         cites = [{"n": 1, "title": policy_doc["title"], "snippet": policy_doc["text"][:140] + "…"}]
+        next_pending = None
         if tool["eligible"]:
             reply = (f"Good news: your {o['item']} is eligible for a return. {tool['reason']} Refunds go to your original "
                      "payment method within 5 to 7 business days after inspection [1]. Shall I arrange a pickup?")
+            next_pending = {"need": "confirm_pickup", "order_id": tool["order_id"]}
         else:
             reply = f"I'm sorry, your {o['item']} isn't eligible for a return. {tool['reason']} [1]"
-        return {"reply": reply, "citations": cites, "confidence": 1.0, "handoff": False, "next_pending": None,
+        return {"reply": reply, "citations": cites, "confidence": 1.0, "handoff": False, "next_pending": next_pending,
                 "trace": [{"step": "respond", "detail": "Policy applied to order data, cited"}]}
 
     # ---- FAQ ------------------------------------------------------------

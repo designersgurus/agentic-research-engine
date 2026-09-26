@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4o-mini"
     anthropic_api_key: Optional[str] = None
-    anthropic_model: str = ""
+    anthropic_model: str = ""              # required with an Anthropic key: model id from your Anthropic console
     llm_timeout_s: float = 60.0
 
     # ---- Search / scraping ----------------------------------------------

@@ -44,13 +44,9 @@ class Store:
         return [json.loads(r[0]) for r in rows]
 
     def count_where_status(self, collection: str, statuses: tuple[str, ...]) -> int:
-        marks = ",".join("?" * len(statuses))
+        query = "SELECT COUNT(*) FROM docs WHERE collection=? AND json_extract(data, '$.status')=?"
         with self._lock:
-            row = self._conn.execute(
-                f"SELECT COUNT(*) FROM docs WHERE collection=? AND json_extract(data, '$.status') IN ({marks})",
-                (collection, *statuses),
-            ).fetchone()
-        return int(row[0])
+            return sum(self._conn.execute(query, (collection, st)).fetchone()[0] for st in statuses)
 
     def purge_older_than(self, hours: float) -> int:
         cutoff = time.time() - hours * 3600

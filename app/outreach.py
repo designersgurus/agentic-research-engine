@@ -13,12 +13,18 @@ import asyncio
 import json
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 
 from .channels import CHANNEL_LIMITS, send_message
 from .config import Settings
-from .guardrails import UNTRUSTED_POLICY, Budget, BudgetExceeded, sanitize_untrusted, wrap_untrusted
+from .guardrails import (
+    UNTRUSTED_POLICY,
+    Budget,
+    BudgetExceeded,
+    sanitize_untrusted,
+    wrap_untrusted,
+)
 from .llm import LLM, parse_json
 from .schemas import CampaignCreate
 from .store import Store
@@ -30,7 +36,7 @@ STOP_WORDS = {"stop", "unsubscribe", "opt out", "optout", "cancel"}
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:

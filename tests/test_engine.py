@@ -1,11 +1,22 @@
-"""End-to-end tests. Everything runs in mock mode — no API keys, no network."""
+"""End-to-end tests. Everything runs in mock mode, with no API keys and no network."""
 import asyncio
+import http.server
+import threading
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import tools as tools_mod
 from app.config import Settings
-from app.guardrails import INJECTION_MARKER, Budget, BudgetExceeded, sanitize_untrusted
+from app.guardrails import (
+    INJECTION_MARKER,
+    Budget,
+    BudgetExceeded,
+    sanitize_untrusted,
+    validate_public_url,
+)
+from app.keepalive import KeepAlive
 from app.main import create_app
 from app.research import run_research
 
@@ -152,9 +163,6 @@ def test_api_key_enforced(tmp_path):
 
 
 # ---------------------------------------------------------------- keep-alive
-from datetime import datetime, timezone as _tz
-
-from app.keepalive import KeepAlive
 
 
 def test_keepalive_off_without_public_url(tmp_path):
@@ -167,8 +175,8 @@ def test_keepalive_interval_floor_and_window(tmp_path):
                                  keepalive_interval_seconds=10, keepalive_active_hours="7-23"))
     assert ka.enabled and ka.url == "https://x.onrender.com/ping"
     assert ka.interval_s == 240                                            # can't be set below 4 min
-    assert ka.in_active_window(datetime(2026, 1, 1, 6, 0, tzinfo=_tz.utc))       # 11:30 IST
-    assert not ka.in_active_window(datetime(2026, 1, 1, 20, 0, tzinfo=_tz.utc))  # 01:30 IST
+    assert ka.in_active_window(datetime(2026, 1, 1, 6, 0, tzinfo=UTC))       # 11:30 IST
+    assert not ka.in_active_window(datetime(2026, 1, 1, 20, 0, tzinfo=UTC))  # 01:30 IST
 
 
 def test_keepalive_backs_off_after_failures(tmp_path):
@@ -184,11 +192,6 @@ def test_ping_endpoint(client):
 
 
 # ---------------------------------------------------------------- security
-import http.server
-import threading
-
-from app import tools as tools_mod
-from app.guardrails import validate_public_url
 
 
 @pytest.mark.parametrize("url", [

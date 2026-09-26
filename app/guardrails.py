@@ -102,14 +102,14 @@ _INJECTION_PATTERNS = [
     r"(send|email|forward|post)\s+.{0,40}(api\s*key|password|credentials|contact\s+list)",
 ]
 _INJECTION_RE = re.compile("|".join(_INJECTION_PATTERNS), re.IGNORECASE | re.MULTILINE)
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f​-‏‪-‮⁦-⁩]")
+CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")  # control and bidi-override characters
 
 INJECTION_MARKER = "[removed: possible prompt injection]"
 
 
 def sanitize_untrusted(text: str, max_chars: int, budget: Budget | None = None, source: str = "") -> str:
     """Strip control/bidi chars, neutralize instruction-like phrases, truncate."""
-    text = _CONTROL_RE.sub("", text or "")
+    text = CONTROL_RE.sub("", text or "")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     hits = len(_INJECTION_RE.findall(text))

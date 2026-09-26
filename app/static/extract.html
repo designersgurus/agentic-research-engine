@@ -8,18 +8,19 @@
 </head>
 <body>
 <main>
-  <nav class="topnav"><a href="/demos">← All demos</a><span class="sep">|</span><a href="/docs#/demo%3A%20document%20extraction">API</a></nav>
+  <nav class="topnav"><a href="/">← All demos</a><span class="sep">|</span><a href="/docs#/demo%3A%20document%20extraction">API</a></nav>
   <h1>Document AI Extraction</h1>
   <p class="sub">Turns invoices, receipts and purchase orders into structured data, then <strong>checks the maths</strong> before anything is approved. Clean documents are auto-approved; problems go to a human with the exact reasons.</p>
 
   <details class="how">
     <summary>How it works, and what to try</summary>
     <ol>
+      <li><strong>Read</strong>: typed text, a PDF, or a photo of the document (JPG, PNG, WebP). Photos and scans go through OCR.</li>
       <li><strong>Extract</strong>: document type, vendor, number, dates, bill-to, currency, line items, subtotal, tax, total, each with a confidence score.</li>
       <li><strong>Validate</strong>: required fields, qty × price per line, lines add up to subtotal, subtotal + tax = total, tax matches the stated rate, due date after issue date.</li>
       <li><strong>Decide</strong>: auto-approve, or send to review with reasons. Export as JSON or CSV.</li>
     </ol>
-    Try <em>Invoice (with errors)</em>: it contains three problems. Or upload your own text-based PDF invoice (up to 2 MB).
+    Try <em>Invoice (with errors)</em>: it contains three problems. Or upload a photo or PDF of your own invoice (up to 5 MB). Files are processed in memory and never stored.
   </details>
 
   <div class="grid2">
@@ -28,8 +29,9 @@
       <div class="row" id="samples"></div>
       <label for="doc">Document text</label>
       <textarea id="doc" spellcheck="false" wrap="off" maxlength="20000"></textarea>
-      <label for="pdf">…or upload a PDF</label>
-      <input type="file" id="pdf" accept="application/pdf">
+      <label for="file">…or upload a photo or PDF (JPG, PNG, WebP, PDF · max 5 MB)</label>
+      <input type="file" id="file" accept="image/jpeg,image/png,image/webp,application/pdf">
+      <img id="preview" class="upload-preview hidden" alt="Uploaded document preview">
       <div class="row" style="margin-top:12px"><button id="run">Extract &amp; validate</button><span class="status" id="status"></span></div>
     </section>
     <section class="card">
@@ -45,38 +47,53 @@
     <div class="scroll-x"><table id="items"></table></div>
     <div class="row" style="margin-top:14px"><button class="ghost" id="dlJson">Download JSON</button><button class="ghost" id="dlCsv">Download CSV</button></div>
   </section>
-  <p class="foot">Sample documents are fictional. In a client build this plugs into email inboxes, upload portals or accounting software, and scanned documents go through OCR first.</p>
+  <p class="foot">Sample documents are fictional. Uploaded files are processed in memory and never stored. In a client build this plugs into email inboxes, upload portals or accounting software.</p>
 </main>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let last = null, pdfB64 = null;
+let last = null, fileB64 = null;
+const MAX_BYTES = 5e6, TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+
+function clearFile() { fileB64 = null; $("file").value = ""; $("preview").classList.add("hidden"); $("preview").removeAttribute("src"); }
 
 fetch("/demos/api/extract/samples").then(r => r.json()).then(samples => {
   $("samples").innerHTML = Object.entries(samples).map(([k, v]) => `<button type="button" class="ghost" data-k="${k}">${esc(v.label)}</button>`).join("");
-  $("samples").querySelectorAll("button").forEach(b => b.onclick = () => { $("doc").value = samples[b.dataset.k].text; pdfB64 = null; $("pdf").value = ""; run(); });
+  $("samples").querySelectorAll("button").forEach(b => b.onclick = () => { clearFile(); $("doc").value = samples[b.dataset.k].text; run(); });
   $("doc").value = samples.invoice_errors.text;
 });
 
-$("pdf").onchange = () => {
-  const f = $("pdf").files[0]; if (!f) return;
-  if (f.size > 2e6) { $("status").textContent = "PDF must be under 2 MB"; $("pdf").value = ""; return; }
+$("file").onchange = () => {
+  const f = $("file").files[0]; if (!f) return;
+  $("status").classList.add("err");
+  if (f.type && !TYPES.includes(f.type)) { $("status").textContent = "Please choose a JPG, PNG, WebP or PDF file"; clearFile(); return; }
+  if (f.size > MAX_BYTES) { $("status").textContent = "File must be under 5 MB"; clearFile(); return; }
+  $("status").classList.remove("err"); $("status").textContent = "";
   const rd = new FileReader();
-  rd.onload = () => { pdfB64 = String(rd.result).split(",")[1]; $("doc").value = `(PDF selected: ${f.name})`; };
+  rd.onload = () => {
+    const url = String(rd.result);
+    fileB64 = url.split(",")[1];
+    $("doc").value = `(${f.type === "application/pdf" ? "PDF" : "Photo"} selected: ${f.name}, tap Extract & validate)`;
+    if (f.type.startsWith("image/")) { $("preview").src = url; $("preview").classList.remove("hidden"); }
+    else $("preview").classList.add("hidden");
+  };
   rd.readAsDataURL(f);
 };
-$("doc").oninput = () => { pdfB64 = null; };
+$("doc").oninput = clearFile;
 $("run").onclick = run;
 
 async function run() {
-  $("run").disabled = true; $("status").textContent = "processing…"; $("status").classList.remove("err");
+  $("run").disabled = true; $("status").classList.remove("err");
+  $("status").textContent = fileB64 ? "reading the file (photos take a few seconds)…" : "processing…";
   try {
-    const body = pdfB64 ? {pdf_base64: pdfB64} : {text: $("doc").value};
+    const body = fileB64 ? {file_base64: fileB64} : {text: $("doc").value};
     const r = await fetch("/demos/api/extract", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
     const data = await r.json();
-    if (!r.ok) throw new Error(data.detail?.[0]?.msg || data.detail || r.status);
-    last = data; render(data); $("status").textContent = `engine: ${data.engine}`;
-    if (pdfB64) $("doc").value = data.text;
+    if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : data.detail?.[0]?.msg || `error ${r.status}`);
+    last = data; render(data);
+    const src = {text: "typed text", pdf_text: "PDF text layer", ocr_image: "photo via OCR", ocr_pdf: "scanned PDF via OCR"}[data.input.source];
+    $("status").textContent = `read from ${src}` + (data.input.ocr_confidence !== null ? ` · OCR confidence ${data.input.ocr_confidence}` : "") + ` · engine: ${data.engine}`;
+    if (fileB64) $("doc").value = data.text;
   } catch (e) { $("status").textContent = e.message; $("status").classList.add("err"); }
   $("run").disabled = false;
 }

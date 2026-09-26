@@ -18,6 +18,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Annotated, Any, TypedDict
 
+import httpx
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
@@ -46,7 +47,7 @@ class ResearchState(TypedDict, total=False):
     findings: Annotated[list[dict[str, Any]], operator.add]
     searched: Annotated[list[str], operator.add]
     halted: Annotated[bool, _or]
-    pass_count: int
+    round_count: int
     followups: list[str]
     next_step: str
     verified_ids: list[str]
@@ -100,19 +101,19 @@ async def plan_node(state: ResearchState, config: RunnableConfig) -> dict:
         subtasks = [str(s).strip() for s in parse_json(raw).get("subtasks", []) if str(s).strip()]
     except BudgetExceeded:
         return {"subtasks": [], "halted": True}
-    return {"subtasks": (subtasks or [q])[:n], "pass_count": 0}
+    return {"subtasks": (subtasks or [q])[:n], "round_count": 0}
 
 
 async def research_node(payload: dict, config: RunnableConfig) -> dict:
     """One parallel worker: search → fetch → sanitize → extract cited claims."""
     c = _ctx(config)
-    task, pass_no = payload["task"], payload["pass_no"]
+    task, round_no = payload["task"], payload["round_no"]
     try:
         results = await web_search(task, c.settings, c.budget)
     except BudgetExceeded:
         return {"halted": True, "searched": [task]}
-    except Exception as exc:  # network/provider errors shouldn't kill the whole job
-        c.budget.note("search_error", f"{task}: {exc}")
+    except (httpx.HTTPError, ValueError) as exc:  # one failed search shouldn't kill the whole job
+        c.budget.note("search_error", f"{task}: {str(exc)[:120]}")
         return {"searched": [task]}
 
     sources: list[dict[str, str]] = []
@@ -124,7 +125,7 @@ async def research_node(payload: dict, config: RunnableConfig) -> dict:
                 text = page.get("text") or text
             except BudgetExceeded:
                 pass  # keep snippet, stop fetching
-            except Exception as exc:
+            except (httpx.HTTPError, ValueError) as exc:  # unreachable or unreadable page: keep the snippet
                 c.budget.note("fetch_error", f"{res['url']}: {str(exc)[:120]}")
         clean = sanitize_untrusted(text, c.settings.max_page_chars, c.budget, res["url"])
         if clean:
@@ -179,7 +180,7 @@ async def research_node(payload: dict, config: RunnableConfig) -> dict:
                     "url": src["url"],
                     "title": src["title"],
                     "subtask": task,
-                    "pass_no": pass_no,
+                    "round_no": round_no,
                 }
             )
     return {"findings": findings, "searched": [task]}
@@ -189,7 +190,7 @@ async def verify_node(state: ResearchState, config: RunnableConfig) -> dict:
     c = _ctx(config)
     q = state["query"]
     findings = state.get("findings", [])
-    pass_count = state.get("pass_count", 0) + 1
+    round_count = state.get("round_count", 0) + 1
     halted = state.get("halted", False)
 
     verified_ids = [f["id"] for f in findings]
@@ -200,7 +201,7 @@ async def verify_node(state: ResearchState, config: RunnableConfig) -> dict:
         def mock() -> str:
             import json
 
-            if pass_count == 1:
+            if round_count == 1:
                 return json.dumps(
                     {
                         "verified_ids": verified_ids,
@@ -250,7 +251,7 @@ async def verify_node(state: ResearchState, config: RunnableConfig) -> dict:
 
     if halted:
         next_step, reason = "synthesize", "budget_exceeded"
-    elif followups and pass_count <= c.max_passes:
+    elif followups and round_count <= c.max_passes:
         next_step, reason = "research", ""
     elif followups:
         next_step, reason = "synthesize", "max_passes_reached"
@@ -258,7 +259,7 @@ async def verify_node(state: ResearchState, config: RunnableConfig) -> dict:
         next_step, reason = "synthesize", "verified_complete"
 
     log = {
-        "pass": pass_count,
+        "pass": round_count,
         "findings_reviewed": len(findings),
         "verified": len(verified_ids),
         "issues": issues,
@@ -266,7 +267,7 @@ async def verify_node(state: ResearchState, config: RunnableConfig) -> dict:
         "decision": "follow-up research" if next_step == "research" else f"stop ({reason})",
     }
     return {
-        "pass_count": pass_count,
+        "round_count": round_count,
         "verified_ids": verified_ids,
         "open_issues": issues,
         "followups": followups,
@@ -363,12 +364,12 @@ def _template_report(q: str, findings: list[dict], subtasks: list[str]) -> str:
 def route_after_plan(state: ResearchState):
     if state.get("halted") or not state.get("subtasks"):
         return "synthesize"
-    return [Send("research", {"task": t, "pass_no": 0}) for t in state["subtasks"]]
+    return [Send("research", {"task": t, "round_no": 0}) for t in state["subtasks"]]
 
 
 def route_after_verify(state: ResearchState):
     if state.get("next_step") == "research":
-        return [Send("research", {"task": t, "pass_no": state["pass_count"]}) for t in state["followups"]]
+        return [Send("research", {"task": t, "round_no": state["round_count"]}) for t in state["followups"]]
     return "synthesize"
 
 

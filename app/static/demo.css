@@ -63,3 +63,21 @@ pre.box{background:var(--bg);border:1px solid var(--line);border-radius:8px;padd
 .scroll-x{overflow-x:auto}
 
 @media (max-width:600px){.hide-sm{display:none}}
+
+/* ---- home page ---- */
+.hero{margin-bottom:6px}
+.featured{border:2px solid var(--accent);padding:22px}
+.featured-head{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+.featured h2{font-size:24px;margin:0 0 8px}
+.featured .lead{margin:0 0 14px;font-size:15.5px}
+.steps{display:flex;flex-wrap:wrap;gap:6px 0;list-style:none;padding:0;margin:0 0 14px;counter-reset:s}
+.steps li{font:600 13px system-ui;background:var(--accent-soft);color:var(--accent);padding:5px 10px;border-radius:6px}
+.steps li:not(:last-child)::after{content:"→";color:var(--muted);margin:0 -2px 0 12px;font-weight:400}
+.steps li:not(:last-child){margin-right:10px}
+.two-col{margin:0 0 16px;padding-left:18px;font-size:14.5px;columns:2 260px;column-gap:28px}
+.two-col li{break-inside:avoid;margin-bottom:4px}
+.section-title{font-size:18px;margin:26px 0 12px}
+.demo-cards.three{grid-template-columns:1fr}
+@media (min-width:860px){.demo-cards.three{grid-template-columns:1fr 1fr 1fr}}
+.demo-card h3{font-size:17px;margin:0}
+.upload-preview{display:block;max-width:100%;max-height:220px;margin-top:10px;border:1px solid var(--line);border-radius:8px}

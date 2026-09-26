@@ -5,33 +5,43 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings, get_settings
 from .demos.routes import build_router as build_demo_router
 from .guardrails import validate_public_url
 from .keepalive import KeepAlive
+from .llm import LLMError
 from .outreach import OutreachService
 from .research import run_research
-from .schemas import CampaignCreate, InboundMessage, Job, JobAccepted, JobCreate, ReplyEvent
+from .schemas import (
+    CampaignCreate,
+    InboundMessage,
+    Job,
+    JobAccepted,
+    JobCreate,
+    ReplyEvent,
+)
 from .security import BASE_HEADERS, PAGE_CSP, RateLimiter, client_ip
 from .store import Store
 
 STATIC = Path(__file__).parent / "static"
+log = logging.getLogger("engine")
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True) -> FastAPI:
@@ -67,9 +77,10 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
         version=s.version,
         lifespan=lifespan,
         description=(
+            "[← Back to all demos](/)\n\n"
             "Standalone multi-agent engine: parallel research → self-verification loop → cited markdown "
-            "reports, plus personalised outreach with hard-capped follow-ups. "
-            "Runs fully in **mock mode** without API keys."
+            "reports, plus personalised outreach with hard-capped follow-ups, and three showcase demos "
+            "(support agent, document extraction, web monitor). Runs fully in **demo mode** without API keys."
         ),
     )
     app.state.settings, app.state.store, app.state.outreach = s, store, outreach
@@ -110,10 +121,6 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
     app.include_router(build_demo_router(s, require_key, require_admin))
 
     # ------------------------------------------------------------------ misc
-    @app.get("/", include_in_schema=False)
-    async def home():
-        return FileResponse(STATIC / "index.html")
-
     @app.get("/ping", include_in_schema=False)
     async def ping() -> dict[str, bool]:
         return {"ok": True}  # deliberately trivial: no DB, no LLM
@@ -149,8 +156,11 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
             try:
                 result = await run_research(req.query, s, max_passes=req.max_passes, token_budget=req.token_budget)
                 job.update(status="completed", result=result, updated_at=_now())
-            except Exception as exc:  # never leave a job stuck in "running"
-                job.update(status="failed", error=str(exc)[:500], updated_at=_now())
+            except LLMError as exc:  # provider errors are safe and useful to show
+                job.update(status="failed", error=str(exc)[:300], updated_at=_now())
+            except Exception:  # never leave a job stuck in "running", never leak internals
+                log.exception("research job %s failed", job_id)
+                job.update(status="failed", error="internal error while running the job", updated_at=_now())
             store.put("jobs", job_id, job)
         url = req.callback_url or s.default_callback_url
         if url:
@@ -166,8 +176,8 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
             await validate_public_url(url)
             async with httpx.AsyncClient(timeout=10) as c:
                 await c.post(url, content=body, headers=headers)
-        except Exception:
-            pass  # delivery is best-effort; results stay available via GET /jobs/{id}
+        except (httpx.HTTPError, ValueError) as exc:  # best-effort; results stay available via GET /jobs/{id}
+            log.warning("callback delivery failed for %s: %s", url, exc)
 
     @app.post("/jobs", status_code=202, response_model=JobAccepted, tags=["research"],
               dependencies=[Depends(require_key)])
@@ -220,7 +230,7 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
         try:
             return await outreach.create_campaign(req)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            raise HTTPException(422, str(exc)) from exc
 
     @app.get("/outreach/campaigns", tags=["outreach"], dependencies=[Depends(require_admin)])
     async def list_campaigns(limit: int = 20):
@@ -244,7 +254,7 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
         try:
             return await outreach.record_reply(campaign_id, contact_id, ev.opt_out, ev.text)
         except KeyError as exc:
-            raise HTTPException(404, str(exc))
+            raise HTTPException(404, str(exc)) from exc
 
     @app.post("/outreach/webhooks/inbound", tags=["outreach"], dependencies=[Depends(require_key)])
     async def inbound(msg: InboundMessage):

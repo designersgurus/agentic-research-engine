@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI &amp; Automation Demos</title>
+<meta name="description" content="Live demos: multi-agent research with LangGraph, an AI support agent, document AI extraction and web-monitor automation.">
+<link rel="stylesheet" href="/static/demo.css">
+</head>
+<body>
+<main>
+  <header class="hero">
+    <h1>AI &amp; Automation Demos</h1>
+    <p class="sub">Working demos you can try right now: no sign-up, fictional data. Each runs the same code that goes into client projects, with hard cost caps and security guardrails built in.</p>
+  </header>
+
+  <section class="card featured">
+    <div class="featured-head">
+      <span class="badge">★ Featured</span>
+      <span class="chip">Multi-agent</span><span class="chip">LangGraph</span><span class="chip">Research agents</span><span class="chip">FastAPI</span>
+    </div>
+    <h2>Agentic Research Engine</h2>
+    <p class="lead">Give it a research question. A planner splits it into sub-tasks, research agents work in parallel, a verifier checks their findings and sends them back for more research when something is missing, and you get a cited report, all within a hard token budget.</p>
+    <ol class="steps" aria-label="Pipeline">
+      <li>Plan</li><li>Parallel research</li><li>Verify</li><li>Capped re-research</li><li>Cited report</li>
+    </ol>
+    <ul class="two-col">
+      <li>Self-verification loop: flags gaps, contradictions and unsupported claims</li>
+      <li>Hard caps on tokens, calls, searches and loop passes</li>
+      <li>Prompt-injection protection for scraped web content</li>
+      <li>Email / WhatsApp / SMS outreach with capped follow-ups</li>
+    </ul>
+    <div class="row">
+      <a class="btn" href="/demos/research">Open the research demo →</a>
+      <a class="btn ghost" href="/docs">API docs</a>
+    </div>
+  </section>
+
+  <h2 class="section-title">More demos</h2>
+  <div class="demo-cards three">
+    <section class="card demo-card">
+      <h3>AI Support Agent</h3>
+      <div class="chips"><span class="chip">RAG</span><span class="chip">tool calling</span><span class="chip">guardrails</span></div>
+      <ul>
+        <li>Answers from a knowledge base with sources, and says "not sure" instead of guessing</li>
+        <li>Looks up orders, checks refunds, books pickups, hands off to a human</li>
+        <li>Blocks prompt injection and card numbers</li>
+      </ul>
+      <a class="btn" href="/demos/support">Try it →</a>
+    </section>
+
+    <section class="card demo-card">
+      <h3>Document AI Extraction</h3>
+      <div class="chips"><span class="chip">OCR</span><span class="chip">PDF &amp; photos</span><span class="chip">validation</span></div>
+      <ul>
+        <li>Invoices and receipts, as text, PDF or phone photo, turned into structured data</li>
+        <li>Checks line totals, tax and dates before approving</li>
+        <li>Problems go to human review with exact reasons</li>
+      </ul>
+      <a class="btn" href="/demos/extract">Try it →</a>
+    </section>
+
+    <section class="card demo-card">
+      <h3>Web Monitor Automation</h3>
+      <div class="chips"><span class="chip">scraping</span><span class="chip">change detection</span><span class="chip">alerts</span></div>
+      <ul>
+        <li>Scrapes a competitor store on a schedule</li>
+        <li>Detects price moves, stock-outs, new and removed products</li>
+        <li>Threshold alerts to Slack, email or webhook, plus price history</li>
+      </ul>
+      <a class="btn" href="/demos/monitor">Try it →</a>
+    </section>
+  </div>
+
+  <p class="foot"><a href="/docs">API documentation</a> · <a href="https://github.com/designersgurus/agentic-research-engine" rel="noopener">Source code</a><br>Hosted on a free tier: if it has been idle, the first load can take up to a minute.</p>
+</main>
+</body>
+</html>
