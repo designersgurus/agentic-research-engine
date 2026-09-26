@@ -1,31 +1,41 @@
 # Agentic Research Engine
 
-A standalone, modular **multi-agent engine** with a FastAPI interface. It does four things:
+Multi-agent AI engine built with **LangGraph** and **FastAPI**: parallel research agents, a self-verification loop, cited reports and capped outreach, with hard cost limits on every AI call.
 
-- runs parallel web research,
-- **verifies its own findings** in a capped loop,
-- writes **cited markdown reports**,
-- drafts personalised outreach with **hard-capped follow-ups**.
+**[▶ Live demos](https://agentic-research-engine-mf23.onrender.com)** · **[Research engine demo](https://agentic-research-engine-mf23.onrender.com/demos/research)** · **[API docs](https://agentic-research-engine-mf23.onrender.com/docs)**
 
-It is built with **LangGraph**. Every paid call passes through a budget guard before it runs.
+<sub>Free hosting: if the site has been idle, the first load can take up to a minute.</sub>
 
-> **Runs with zero API keys.** Without keys, the engine uses a deterministic mock mode, so the full pipeline is visible for free. Add an OpenAI/Anthropic key and a Serper key to switch to live research.
+## Try it in 2 minutes
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/designersgurus/agentic-research-engine)
+1. Open the **[research demo](https://agentic-research-engine-mf23.onrender.com/demos/research)** and tap **Run research**. The *Verification* tab shows the verifier finding a gap and sending agents back for more research.
+2. Set the token budget to **1500** and run again: the hard cap stops the job and returns partial results instead of overspending.
+3. Create an outreach campaign asking for 5 follow-ups: the server caps it at 3.
 
-**Live demos:** https://agentic-research-engine-mf23.onrender.com · **API docs:** `/docs` (Swagger) · `/redoc`
+## Four live demos
 
-The home page lists four demos. This research engine is the featured one ([open it directly](https://agentic-research-engine-mf23.onrender.com/demos/research)). The other three are in the same codebase:
+| Demo | What it shows |
+|---|---|
+| **[Agentic Research Engine](https://agentic-research-engine-mf23.onrender.com/demos/research)** | Planner → parallel research agents → verifier → capped re-research → cited report. Token, call and loop caps. Email / WhatsApp / SMS outreach with capped follow-ups |
+| **[AI Support Agent](https://agentic-research-engine-mf23.onrender.com/demos/support)** | Answers from a knowledge base with sources, order and refund tools, human handoff, prompt-injection blocking |
+| **[Document AI Extraction](https://agentic-research-engine-mf23.onrender.com/demos/extract)** | Invoices from text, PDF or a phone photo (OCR) → structured data, with maths checks and human review |
+| **[Web Monitor Automation](https://agentic-research-engine-mf23.onrender.com/demos/monitor)** | Scrapes a competitor store, detects price and stock changes, sends alerts |
 
-| Demo | What it shows | Code |
-|---|---|---|
-| [AI Support Agent](https://agentic-research-engine-mf23.onrender.com/demos/support) | RAG answers with citations, tool calling (order lookup, refund check, human-handoff ticket), slot filling, "no guessing" below a confidence threshold, blocking of prompt injection and card numbers, PII redaction | `app/demos/support.py` |
-| [Document AI Extraction](https://agentic-research-engine-mf23.onrender.com/demos/extract) | Invoices, receipts and POs as text, PDF or a **phone photo** (on-device OCR) → structured JSON/CSV, arithmetic and date validation, auto-approve vs human review. Uploads are processed in memory and never stored | `app/demos/extract.py`, `app/demos/ocr.py` |
-| [Web Monitor Automation](https://agentic-research-engine-mf23.onrender.com/demos/monitor) | CSS-selector scraping, snapshot diffing (price, stock, new and removed products), threshold alerts to Slack/email/webhook, price history | `app/demos/monitor.py` |
+<p>
+  <img src="docs/02-verification.png" alt="Self-verification loop" width="49%">
+  <img src="docs/03-guardrails.png" alt="Guardrails and spend meters" width="49%">
+</p>
 
-> The demo is hosted on Render's free tier, so if it has been idle, the first load can take up to a minute.
+## Built to run safely in production
 
-## Scope coverage
+- **No runaway spend:** tokens are reserved *before* every AI call, with caps on calls, searches, loop passes and recursion.
+- **Self-verification:** gaps, contradictions and unsupported claims trigger follow-up research. Invented citations are removed.
+- **Security:** prompt-injection filtering, SSRF protection, rate limits, API keys, signed webhooks. Live mode refuses to run without an API key. Details in [SECURITY.md](SECURITY.md).
+- **Quality:** 59 automated tests, and lint, security scan and dependency audit all clean.
+- **Runs without keys:** demo mode needs no API keys. Add OpenAI or Anthropic plus Serper keys for live research.
+
+<details>
+<summary><b>How this maps to a typical multi-agent engine brief</b></summary>
 
 Each requirement from a typical agentic-research brief, where it's built, and where to see it working:
 
@@ -40,168 +50,14 @@ Each requirement from a typical agentic-research brief, where it's built, and wh
 | FastAPI endpoints and webhooks to sync with a backend | `app/main.py`, HMAC-signed callbacks, inbound webhook | `/docs` |
 | Hard token caps, loop limits, injection sanitization | `app/guardrails.py` | Guardrails tab; token budget 1500 → `budget_exceeded` |
 | Modular codebase, `.env` config, OpenAPI docs | `app/*`, `.env.example`, auto OpenAPI | `/openapi.json`, 58 offline tests |
-
-## 2-minute tour
-
-**1. Self-verification loop.** The verifier finds a gap and triggers one follow-up research round. Pass 2 then stops clean.
-
-![Verification loop](docs/02-verification.png)
-
-**2. Guardrails and spend.** Every cap is metered. A prompt-injection line planted in one demo source is neutralised before any model sees it.
-
-![Guardrails](docs/03-guardrails.png)
-
-**3. Capped outreach.** The request asked for 5 follow-ups, and the server capped it at 3. Priya replied, so her follow-ups stopped. Arjun didn't reply and was closed after 3.
-
-![Capped outreach](docs/05-outreach-capped.png)
-
-<details>
-<summary><b>4. Cited report</b> (click to expand)</summary>
-
-![Cited report](docs/04-report.png)
-
 </details>
 
-**Try it yourself:** run with defaults, then set the token budget to **1500** to watch the cap return partial results.
+## Documentation
 
----
+- [Architecture](docs/ARCHITECTURE.md): the agent graph, cost controls, guardrails and how to extend it
+- [Developer guide](docs/DEVELOPER.md): local setup, API reference, configuration and deploying to Render
+- [Security](SECURITY.md): threat model and controls
 
-## Architecture
+**Stack:** Python · LangGraph · FastAPI · OpenAI / Anthropic APIs · Serper · SendGrid / Twilio · SQLite · Render
 
-```mermaid
-flowchart LR
-    A[POST /jobs] --> P[Planner<br/>splits into sub-tasks]
-    P -->|Send x N| R1[Researcher]
-    P -->|parallel| R2[Researcher]
-    P --> R3[Researcher]
-    R1 & R2 & R3 --> V{Verifier<br/>gaps · contradictions · unsupported}
-    V -->|follow-up queries<br/>pass ≤ MAX_VERIFY_PASSES| R4[Researcher x M]
-    R4 --> V
-    V -->|complete / cap hit| S[Synthesizer<br/>cited markdown]
-    S --> O[(Job store)]
-    O --> C[Callback webhook<br/>HMAC-signed]
-    O --> OUT[Outreach<br/>email · WhatsApp · SMS]
-    OUT --> F[Scheduler<br/>capped follow-ups]
-```
-
-| Module | Responsibility |
-|---|---|
-| `app/research.py` | LangGraph state machine: plan → parallel research (`Send`) → verify → capped loop → synthesize |
-| `app/guardrails.py` | `Budget` (token / LLM-call / search / scrape caps with reservations), prompt-injection sanitizer, SSRF guard |
-| `app/llm.py` | Provider-agnostic client (OpenAI, Anthropic, mock) that enforces the budget before each call |
-| `app/tools.py` | Serper search and page fetch with readable-text extraction |
-| `app/outreach.py` | Personalised drafts, the follow-up state machine, reply/opt-out handling |
-| `app/channels.py` | SendGrid (email) and Twilio (SMS/WhatsApp). **Dry-run by default** |
-| `app/main.py` | FastAPI endpoints, background jobs, APScheduler, signed callbacks |
-| `app/store.py` | SQLite document store (swap for Postgres in production) |
-
-## How runaway spend is prevented
-
-The engine uses several independent layers. If one fails, another still stops the run.
-
-1. **Pre-call budget reservation.** Every LLM call reserves `estimated prompt + max_output` tokens *before* it runs, and the reservation is settled against real usage afterwards. Parallel branches cannot both slip under the cap and overshoot it together.
-2. **Hard counters.** Each job has fixed limits on LLM calls, searches and page fetches.
-3. **Loop caps.** Three limits bound the loop:
-   - `MAX_VERIFY_PASSES` caps follow-up research rounds.
-   - `MAX_FOLLOWUP_QUERIES` caps queries per round.
-   - Follow-up queries that were already searched are removed.
-   - LangGraph's `recursion_limit` is a final ceiling.
-4. **Graceful stop.** When any cap is hit, the graph goes straight to synthesis. Synthesis falls back to a zero-cost template, so the job returns **partial results** marked `stopped_reason: "budget_exceeded"`. It never fails silently and never keeps spending.
-5. **Requests can only tighten caps.** `max_passes` and `token_budget` in a request are clamped to the server limits.
-6. **Concurrency cap.** `MAX_CONCURRENT_JOBS` limits how many jobs run at once.
-
-## Prompt-injection and safety guardrails
-
-- **Scraped text is cleaned and fenced.** Control and bidi characters are removed, instruction-like phrases are neutralised, and the text is wrapped in `<untrusted_data>` tags. The model is told to treat it strictly as data. The demo sources include a real injection attempt, which you can see neutralised on the Guardrails tab.
-- **Contact notes are treated as untrusted** in outreach drafts.
-- **Invented citations are stripped.** Any `[n]` in the report that doesn't map to a collected source is removed. Findings without a valid source are dropped.
-- **SSRF guard.** Scraping and callbacks refuse private, loopback and link-local addresses.
-- **Tool separation.** Research agents have no access to outreach tools. Sending only happens through an explicit API call.
-- **Fail-safe live mode.** If any live key or live sending is enabled while `API_KEY` is unset, every write endpoint refuses with `503`.
-- **Abuse limits.** Per-IP rate limit, job backlog cap, 24-hour data retention, and listing endpoints disabled in open demo mode.
-- **Hardened HTTP.** Strict CSP, `X-Frame-Options`, HSTS, and SSRF checks on every redirect hop. See [SECURITY.md](SECURITY.md) for the full threat model.
-- **Outreach is dry-run by default.** Follow-ups are capped per contact (server-side `OUTREACH_MAX_FOLLOWUPS_CAP`) and stop immediately on a reply, or on STOP / unsubscribe.
-
-## Quick start
-
-```bash
-git clone https://github.com/designersgurus/agentic-research-engine
-cd agentic-research-engine
-pip install -r requirements-dev.txt              # runtime deps + test tools
-pip install --no-deps -r requirements-ocr.txt    # OCR engine (see note below)
-cp .env.example .env                             # optional: works without keys
-uvicorn app.main:app --reload
-# open http://localhost:8000 (demos) · http://localhost:8000/docs (Swagger)
-pytest -q                                        # 58 tests, all offline
-```
-
-The OCR package is installed with `--no-deps` because it declares the desktop build of OpenCV, which needs graphics libraries servers don't have. Its real dependencies, including `opencv-python-headless`, are in `requirements.txt`. Peak memory for a photo upload is about 360 MB, so it fits a 512 MB instance.
-
-## API
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/jobs` | Start a research job → `202 {job_id}` |
-| `GET` | `/jobs/{id}` | Status, report, findings, verification log, usage |
-| `GET` | `/jobs/{id}/report` | Cited report as `text/markdown` |
-| `GET` | `/jobs` | Recent jobs (requires `API_KEY`; disabled in open demo mode) |
-| `POST` | `/outreach/campaigns` | Draft and send first messages, schedule capped follow-ups |
-| `GET` | `/outreach/campaigns/{id}` | Campaign with per-contact status and message history |
-| `POST` | `/outreach/campaigns/{id}/contacts/{cid}/reply` | Record a reply or opt-out (stops follow-ups) |
-| `POST` | `/outreach/webhooks/inbound` | Normalised inbound webhook from your email/SMS provider |
-| `POST` | `/outreach/process-due` | Run the follow-up scheduler now (`force=true` for demos) |
-| `GET` | `/health` | Active providers and configured caps |
-| `POST` | `/demos/api/support/chat` | Support agent: one conversation turn |
-| `POST` | `/demos/api/extract` | Document extraction from `text` or `file_base64` (PDF, PNG, JPEG, WebP; max 5 MB) |
-| `POST` | `/demos/api/monitor/check` | Web monitor: scrape, compare and alert for a simulated day |
-
-```bash
-curl -X POST $URL/jobs -H 'Content-Type: application/json' \
-  -d '{"query":"AI agents for customer support","max_passes":2,"token_budget":20000,
-       "callback_url":"https://your-backend.example/hooks/research"}'
-```
-
-Callbacks are sent as `POST` with `{"event":"job.finished","job":{...}}`. When `WEBHOOK_SECRET` is set, they are signed with `X-Signature-256: sha256=<hmac>`. When `API_KEY` is set, all write endpoints require the `X-API-Key` header.
-
-## Configuration
-
-All settings are environment variables. See [`.env.example`](.env.example) for the full list.
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `LLM_PROVIDER` | `auto` | `openai` / `anthropic` / `mock`. `auto` picks by which key is present |
-| `SEARCH_PROVIDER` | `auto` | `serper` / `mock` |
-| `JOB_TOKEN_BUDGET` | `60000` | Hard token cap per job |
-| `MAX_LLM_CALLS` / `MAX_SEARCH_CALLS` / `MAX_SCRAPE_CALLS` | `30` / `15` / `20` | Per-job counters |
-| `MAX_VERIFY_PASSES` | `2` | Follow-up research rounds the verifier may trigger |
-| `GRAPH_RECURSION_LIMIT` | `40` | LangGraph super-step ceiling |
-| `OUTREACH_DRY_RUN` | `true` | Record messages without sending them |
-| `OUTREACH_MAX_FOLLOWUPS_CAP` | `3` | Server-side ceiling on follow-ups per contact |
-| `ANTHROPIC_MODEL` | *(empty)* | Required when using an Anthropic key: the model id from your Anthropic console |
-
-## Deploy on Render
-
-1. Click **Deploy to Render** above, or go to Render → **New → Blueprint** and select this repo. `render.yaml` configures everything.
-2. Leave the key fields empty for mock mode, or add `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` and `SERPER_API_KEY` for live research.
-3. **Set `API_KEY` before adding real keys**, so a public URL can't spend your credits.
-
-**Keep-alive.** Render's free tier sleeps after about 15 minutes without traffic. To prevent that, the app pings its own public URL (`RENDER_EXTERNAL_URL/ping`) every 5 minutes. It is built to stay light:
-- It only runs when a public URL exists, so never locally or in tests.
-- The interval can't be set below 4 minutes.
-- Each ping is a single tiny request to `/ping`, with no database or LLM work.
-- After 3 failures in a row, it backs off to one ping every 30 minutes.
-- You can set `KEEPALIVE_ACTIVE_HOURS=7-23` to let it sleep overnight and save free instance hours.
-
-Its status is shown under `keepalive` in `/health`.
-
-Note: Render's disk resets on each deploy. For production, use Postgres and a worker. The engine's store and scheduler are isolated modules, so they can be swapped.
-
-## Extending
-
-- **New agent:** add a node to `build_graph()` in `app/research.py`. Route to it through a conditional edge, and pass shared services through `config["configurable"]["ctx"]`.
-- **New channel:** add a branch to `send_message()` in `app/channels.py` and set its length limit in `CHANNEL_LIMITS`.
-- **CrewAI:** the engine works the same way behind the API. The budget, sanitizer and store are framework-independent.
-
-## License
-
-MIT
+MIT License
