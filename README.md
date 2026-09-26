@@ -13,7 +13,7 @@ It is built with **LangGraph**. Every paid call passes through a budget guard be
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/designersgurus/agentic-research-engine)
 
-**Live demo:** https://agentic-research-engine.onrender.com · **API docs:** `/docs` (Swagger) · `/redoc`
+**Live demo:** https://agentic-research-engine-mf23.onrender.com · **API docs:** `/docs` (Swagger) · `/redoc`
 
 ---
 
