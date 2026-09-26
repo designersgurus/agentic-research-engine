@@ -42,3 +42,19 @@ class Store:
                 "SELECT data FROM docs WHERE collection=? ORDER BY updated DESC LIMIT ?", (collection, limit)
             ).fetchall()
         return [json.loads(r[0]) for r in rows]
+
+    def count_where_status(self, collection: str, statuses: tuple[str, ...]) -> int:
+        marks = ",".join("?" * len(statuses))
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT COUNT(*) FROM docs WHERE collection=? AND json_extract(data, '$.status') IN ({marks})",
+                (collection, *statuses),
+            ).fetchone()
+        return int(row[0])
+
+    def purge_older_than(self, hours: float) -> int:
+        cutoff = time.time() - hours * 3600
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM docs WHERE updated < ?", (cutoff,))
+            self._conn.commit()
+        return cur.rowcount

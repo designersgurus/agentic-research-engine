@@ -146,6 +146,9 @@ async def validate_public_url(url: str) -> None:
     except socket.gaierror as exc:
         raise ValueError(f"cannot resolve host {host}") from exc
     for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped  # ::ffff:127.0.0.1 must not bypass the check
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified):
             raise ValueError(f"blocked non-public address for {host}")

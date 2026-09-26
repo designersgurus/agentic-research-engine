@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     default_callback_url: Optional[str] = None
     db_path: str = "data/engine.db"
 
+    # ---- Abuse protection ------------------------------------------------
+    rate_limit_per_minute: int = 30     # write requests per client IP per minute (0 = off)
+    max_queued_jobs: int = 20           # reject new jobs with 429 beyond this backlog
+    data_retention_hours: int = 24      # jobs/campaigns older than this are purged (0 = keep)
+
     # ---- Outreach --------------------------------------------------------
     outreach_dry_run: bool = True
     outreach_max_followups_cap: int = 3

@@ -17,6 +17,7 @@ def mock_settings(tmp_path, **kw) -> Settings:
         search_provider="mock",
         db_path=str(tmp_path / "test.db"),
         outreach_dry_run=True,
+        rate_limit_per_minute=1000,
     )
     base.update(kw)
     return Settings(**base)
@@ -180,3 +181,92 @@ def test_keepalive_backs_off_after_failures(tmp_path):
 def test_ping_endpoint(client):
     assert client.get("/ping").json() == {"ok": True}
     assert "keepalive" in client.get("/health").json()
+
+
+# ---------------------------------------------------------------- security
+import http.server
+import threading
+
+from app import tools as tools_mod
+from app.guardrails import validate_public_url
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1/", "http://localhost:8000/", "http://169.254.169.254/latest/meta-data/",
+    "http://10.0.0.5/", "http://0.0.0.0/", "http://[::ffff:127.0.0.1]/", "file:///etc/passwd",
+])
+def test_ssrf_blocks_internal_targets(url):
+    with pytest.raises(ValueError):
+        asyncio.run(validate_public_url(url))
+
+
+def test_scraper_rechecks_redirect_targets(monkeypatch):
+    class Redirect(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", "http://169.254.169.254/latest/meta-data/")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    start = f"http://127.0.0.1:{srv.server_port}/"
+    real = tools_mod.validate_public_url
+
+    async def allow_only_test_server(url):
+        if url != start:
+            await real(url)
+
+    monkeypatch.setattr(tools_mod, "validate_public_url", allow_only_test_server)
+    budget = Budget(token_limit=1000, llm_call_limit=1, search_limit=1, scrape_limit=5)
+    with pytest.raises(ValueError, match="blocked"):
+        asyncio.run(tools_mod.fetch_page(start, Settings(_env_file=None), budget))
+    srv.shutdown()
+
+
+def test_listing_disabled_without_key(client):
+    assert client.get("/jobs").status_code == 403
+    assert client.get("/outreach/campaigns").status_code == 403
+
+
+def test_listing_requires_key(tmp_path):
+    app = create_app(mock_settings(tmp_path, api_key="k"), start_scheduler=False)
+    with TestClient(app) as c:
+        assert c.get("/jobs").status_code == 401
+        assert c.get("/jobs", headers={"X-API-Key": "k"}).status_code == 200
+
+
+def test_live_mode_without_key_refuses_writes(tmp_path):
+    app = create_app(mock_settings(tmp_path, outreach_dry_run=False), start_scheduler=False)
+    with TestClient(app) as c:
+        assert c.post("/jobs", json={"query": "abc test"}).status_code == 503
+
+
+def test_rate_limit(tmp_path):
+    app = create_app(mock_settings(tmp_path, rate_limit_per_minute=2), start_scheduler=False)
+    with TestClient(app) as c:
+        codes = [c.post("/jobs", json={"query": "abc test"}).status_code for _ in range(3)]
+    assert codes == [202, 202, 429]
+
+
+def test_queue_cap(tmp_path):
+    app = create_app(mock_settings(tmp_path, max_queued_jobs=0), start_scheduler=False)
+    with TestClient(app) as c:
+        assert c.post("/jobs", json={"query": "abc test"}).status_code == 429
+
+
+def test_security_headers(client):
+    r = client.get("/")
+    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert client.get("/health").headers["x-frame-options"] == "DENY"
+
+
+def test_retention_purge(tmp_path):
+    from app.store import Store
+
+    st = Store(str(tmp_path / "p.db"))
+    st.put("jobs", "old", {"id": "old"})
+    assert st.purge_older_than(-1) == 1 and st.get("jobs", "old") is None

@@ -14,7 +14,7 @@ from typing import Any, Optional
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from .config import Settings, get_settings
 from .guardrails import validate_public_url
@@ -22,6 +22,7 @@ from .keepalive import KeepAlive
 from .outreach import OutreachService
 from .research import run_research
 from .schemas import CampaignCreate, InboundMessage, Job, JobAccepted, JobCreate, ReplyEvent
+from .security import BASE_HEADERS, PAGE_CSP, RateLimiter, client_ip
 from .store import Store
 
 STATIC = Path(__file__).parent / "static"
@@ -38,11 +39,19 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
     job_slots = asyncio.Semaphore(s.max_concurrent_jobs)
     scheduler = AsyncIOScheduler(timezone="UTC")
     keepalive = KeepAlive(s)
+    limiter = RateLimiter(s.rate_limit_per_minute)
+    # "Live" = anything that can spend money or reach real people
+    live_mode = (
+        s.resolved_llm_provider != "mock" or s.resolved_search_provider != "mock" or not s.outreach_dry_run
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if start_scheduler:
             scheduler.add_job(outreach.process_due, "interval", seconds=s.scheduler_tick_seconds, max_instances=1)
+            if s.data_retention_hours > 0:
+                scheduler.add_job(store.purge_older_than, "interval", hours=1, args=[s.data_retention_hours],
+                                  max_instances=1, coalesce=True)
             if keepalive.enabled:
                 scheduler.add_job(keepalive.tick, "interval", seconds=keepalive.interval_s,
                                   max_instances=1, coalesce=True)
@@ -64,8 +73,34 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
     app.state.settings, app.state.store, app.state.outreach = s, store, outreach
     app.state.keepalive = keepalive
 
-    def require_key(x_api_key: Optional[str] = Header(None)) -> None:
-        if s.api_key and not hmac.compare_digest(x_api_key or "", s.api_key):
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        for k, v in BASE_HEADERS.items():
+            response.headers.setdefault(k, v)
+        if request.url.path == "/":
+            response.headers["Content-Security-Policy"] = PAGE_CSP
+        return response
+
+    def _key_ok(request: Request, x_api_key: Optional[str]) -> bool:
+        supplied = x_api_key or request.query_params.get("key") or ""  # ?key= for provider webhooks
+        return bool(s.api_key) and hmac.compare_digest(supplied, s.api_key)
+
+    def require_key(request: Request, x_api_key: Optional[str] = Header(None)) -> None:
+        """Write access. Fail-safe: live mode without API_KEY refuses all writes."""
+        if s.api_key:
+            if not _key_ok(request, x_api_key):
+                raise HTTPException(401, "missing or invalid X-API-Key")
+        elif live_mode:
+            raise HTTPException(503, "live mode is enabled but API_KEY is not set; refusing writes")
+        if not limiter.allow(client_ip(request)):
+            raise HTTPException(429, "rate limit exceeded; try again in a minute")
+
+    def require_admin(request: Request, x_api_key: Optional[str] = Header(None)) -> None:
+        """Listing endpoints expose everyone's data, so they need a key and are off in open demo mode."""
+        if not s.api_key:
+            raise HTTPException(403, "listing is disabled unless API_KEY is configured")
+        if not _key_ok(request, x_api_key):
             raise HTTPException(401, "missing or invalid X-API-Key")
 
     # ------------------------------------------------------------------ misc
@@ -86,6 +121,7 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
             "search": s.resolved_search_provider,
             "outreach_dry_run": s.outreach_dry_run,
             "auth_required": bool(s.api_key),
+            "live_mode": live_mode,
             "keepalive": keepalive.status(),
             "caps": {
                 "job_token_budget": s.job_token_budget,
@@ -131,6 +167,8 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
               dependencies=[Depends(require_key)])
     async def create_job(req: JobCreate, bg: BackgroundTasks, request: Request):
         """Start a research job. Poll `GET /jobs/{id}` or receive the result at `callback_url`."""
+        if store.count_where_status("jobs", ("queued", "running")) >= s.max_queued_jobs:
+            raise HTTPException(429, "job queue is full; try again shortly")
         job_id = uuid.uuid4().hex[:12]
         store.put(
             "jobs",
@@ -145,7 +183,7 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
             "links": {"self": f"/jobs/{job_id}", "report": f"/jobs/{job_id}/report"},
         }
 
-    @app.get("/jobs", tags=["research"])
+    @app.get("/jobs", tags=["research"], dependencies=[Depends(require_admin)])
     async def list_jobs(limit: int = 20) -> list[dict[str, Any]]:
         return [
             {k: j[k] for k in ("id", "status", "query", "created_at", "updated_at")}
@@ -178,7 +216,7 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
         except ValueError as exc:
             raise HTTPException(422, str(exc))
 
-    @app.get("/outreach/campaigns", tags=["outreach"])
+    @app.get("/outreach/campaigns", tags=["outreach"], dependencies=[Depends(require_admin)])
     async def list_campaigns(limit: int = 20):
         return [
             {"id": c["id"], "name": c["name"], "channel": c["channel"], "contacts": len(c["contacts"]),

@@ -73,29 +73,41 @@ def _mock_search(query: str, n: int) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Fetch + extract readable text
 # ---------------------------------------------------------------------------
+MAX_REDIRECTS = 5
+
+
 async def fetch_page(url: str, settings: Settings, budget: Budget) -> dict[str, str]:
     budget.take_scrape()
     if MOCK_DOMAIN in url:
         return _mock_page(url)
-    await validate_public_url(url)  # SSRF guard
     async with httpx.AsyncClient(
         timeout=settings.http_timeout_s,
-        follow_redirects=True,
+        follow_redirects=False,  # redirects are followed manually so every hop is re-validated
         headers={"User-Agent": "Mozilla/5.0 (compatible; AgenticResearchEngine/0.1)"},
     ) as client:
-        async with client.stream("GET", url) as r:
-            r.raise_for_status()
-            ctype = r.headers.get("content-type", "")
-            if "html" not in ctype and "text" not in ctype:
-                raise ValueError(f"unsupported content-type {ctype}")
-            chunks, size = [], 0
-            async for chunk in r.aiter_bytes():
-                size += len(chunk)
-                if size > settings.max_page_bytes:
-                    break
-                chunks.append(chunk)
-            html = b"".join(chunks).decode(r.encoding or "utf-8", errors="ignore")
-    return {"url": url, **html_to_text(html)}
+        current = url
+        for _ in range(MAX_REDIRECTS + 1):
+            await validate_public_url(current)  # SSRF guard on every hop
+            async with client.stream("GET", current) as r:
+                if r.is_redirect:
+                    location = r.headers.get("location")
+                    if not location:
+                        raise ValueError("redirect without Location header")
+                    current = str(r.url.join(location))
+                    continue
+                r.raise_for_status()
+                ctype = r.headers.get("content-type", "")
+                if "html" not in ctype and "text" not in ctype:
+                    raise ValueError(f"unsupported content-type {ctype}")
+                chunks, size = [], 0
+                async for chunk in r.aiter_bytes():
+                    size += len(chunk)
+                    if size > settings.max_page_bytes:
+                        break
+                    chunks.append(chunk)
+                html = b"".join(chunks).decode(r.encoding or "utf-8", errors="ignore")
+                return {"url": current, **html_to_text(html)}
+        raise ValueError(f"too many redirects (> {MAX_REDIRECTS})")
 
 
 def html_to_text(html: str) -> dict[str, str]:

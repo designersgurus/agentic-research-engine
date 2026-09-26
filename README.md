@@ -31,7 +31,7 @@ Each requirement from a typical agentic-research brief, where it's built, and wh
 | Scheduled, capped follow-ups for unresponsive contacts | `process_due` + APScheduler, server-side cap | Ask for 5 follow-ups → capped at 3 → `closed_no_reply` |
 | FastAPI endpoints and webhooks to sync with a backend | `app/main.py`, HMAC-signed callbacks, inbound webhook | `/docs` |
 | Hard token caps, loop limits, injection sanitization | `app/guardrails.py` | Guardrails tab; token budget 1500 → `budget_exceeded` |
-| Modular codebase, `.env` config, OpenAPI docs | `app/*`, `.env.example`, auto OpenAPI | `/openapi.json`, 16 offline tests |
+| Modular codebase, `.env` config, OpenAPI docs | `app/*`, `.env.example`, auto OpenAPI | `/openapi.json`, 31 offline tests |
 
 ## 2-minute tour
 
@@ -109,6 +109,9 @@ The engine uses several independent layers. If one fails, another still stops th
 - **Invented citations are stripped.** Any `[n]` in the report that doesn't map to a collected source is removed. Findings without a valid source are dropped.
 - **SSRF guard.** Scraping and callbacks refuse private, loopback and link-local addresses.
 - **Tool separation.** Research agents have no access to outreach tools. Sending only happens through an explicit API call.
+- **Fail-safe live mode.** If any live key or live sending is enabled while `API_KEY` is unset, every write endpoint refuses with `503`.
+- **Abuse limits.** Per-IP rate limit, job backlog cap, 24-hour data retention, and listing endpoints disabled in open demo mode.
+- **Hardened HTTP.** Strict CSP, `X-Frame-Options`, HSTS, and SSRF checks on every redirect hop. See [SECURITY.md](SECURITY.md) for the full threat model.
 - **Outreach is dry-run by default.** Follow-ups are capped per contact (server-side `OUTREACH_MAX_FOLLOWUPS_CAP`) and stop immediately on a reply, or on STOP / unsubscribe.
 
 ## Quick start
@@ -116,11 +119,11 @@ The engine uses several independent layers. If one fails, another still stops th
 ```bash
 git clone https://github.com/designersgurus/agentic-research-engine
 cd agentic-research-engine
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # runtime deps + test tools
 cp .env.example .env          # optional — works without keys
 uvicorn app.main:app --reload
 # open http://localhost:8000  (demo UI)  ·  http://localhost:8000/docs  (Swagger)
-pytest -q                      # 12 tests, all offline
+pytest -q                      # 31 tests, all offline
 ```
 
 ## API
@@ -130,7 +133,7 @@ pytest -q                      # 12 tests, all offline
 | `POST` | `/jobs` | Start a research job → `202 {job_id}` |
 | `GET` | `/jobs/{id}` | Status, report, findings, verification log, usage |
 | `GET` | `/jobs/{id}/report` | Cited report as `text/markdown` |
-| `GET` | `/jobs` | Recent jobs |
+| `GET` | `/jobs` | Recent jobs (requires `API_KEY`; disabled in open demo mode) |
 | `POST` | `/outreach/campaigns` | Draft and send first messages, schedule capped follow-ups |
 | `GET` | `/outreach/campaigns/{id}` | Campaign with per-contact status and message history |
 | `POST` | `/outreach/campaigns/{id}/contacts/{cid}/reply` | Record a reply or opt-out (stops follow-ups) |
