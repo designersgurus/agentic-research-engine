@@ -148,3 +148,35 @@ def test_api_key_enforced(tmp_path):
     with TestClient(app) as c:
         assert c.post("/jobs", json={"query": "abc test"}).status_code == 401
         assert c.post("/jobs", json={"query": "abc test"}, headers={"X-API-Key": "secret"}).status_code == 202
+
+
+# ---------------------------------------------------------------- keep-alive
+from datetime import datetime, timezone as _tz
+
+from app.keepalive import KeepAlive
+
+
+def test_keepalive_off_without_public_url(tmp_path):
+    ka = KeepAlive(mock_settings(tmp_path))
+    assert not ka.enabled and asyncio.run(ka.tick()) == "disabled"
+
+
+def test_keepalive_interval_floor_and_window(tmp_path):
+    ka = KeepAlive(mock_settings(tmp_path, render_external_url="https://x.onrender.com",
+                                 keepalive_interval_seconds=10, keepalive_active_hours="7-23"))
+    assert ka.enabled and ka.url == "https://x.onrender.com/ping"
+    assert ka.interval_s == 240                                            # can't be set below 4 min
+    assert ka.in_active_window(datetime(2026, 1, 1, 6, 0, tzinfo=_tz.utc))       # 11:30 IST
+    assert not ka.in_active_window(datetime(2026, 1, 1, 20, 0, tzinfo=_tz.utc))  # 01:30 IST
+
+
+def test_keepalive_backs_off_after_failures(tmp_path):
+    ka = KeepAlive(mock_settings(tmp_path, keepalive_url="https://127.0.0.1:9"))
+    for _ in range(3):
+        assert asyncio.run(ka.tick()) == "failed"
+    assert asyncio.run(ka.tick()) == "backing_off"
+
+
+def test_ping_endpoint(client):
+    assert client.get("/ping").json() == {"ok": True}
+    assert "keepalive" in client.get("/health").json()

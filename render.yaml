@@ -18,6 +18,10 @@ services:
         value: "true"
       - key: JOB_TOKEN_BUDGET
         value: "30000"
+      - key: KEEPALIVE_ENABLED
+        value: "true"
+      - key: KEEPALIVE_INTERVAL_SECONDS
+        value: "300"
       - key: WEBHOOK_SECRET
         generateValue: true
       - key: API_KEY

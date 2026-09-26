@@ -126,7 +126,16 @@ All settings are environment variables. See [`.env.example`](.env.example) for t
 2. Leave the key fields empty for mock mode, or add `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` and `SERPER_API_KEY` for live research.
 3. **Set `API_KEY` before adding real keys**, so a public URL can't spend your credits.
 
-Note: Render's free tier sleeps after inactivity, and its disk resets on each deploy. For production, use Postgres and a worker. The engine's store and scheduler are isolated modules, so they can be swapped.
+**Keep-alive.** Render's free tier sleeps after about 15 minutes without traffic. To prevent that, the app pings its own public URL (`RENDER_EXTERNAL_URL/ping`) every 5 minutes. It is built to stay light:
+- It only runs when a public URL exists, so never locally or in tests.
+- The interval can't be set below 4 minutes.
+- Each ping is a single tiny request to `/ping`, with no database or LLM work.
+- After 3 failures in a row, it backs off to one ping every 30 minutes.
+- You can set `KEEPALIVE_ACTIVE_HOURS=7-23` to let it sleep overnight and save free instance hours.
+
+Its status is shown under `keepalive` in `/health`.
+
+Note: Render's disk resets on each deploy. For production, use Postgres and a worker. The engine's store and scheduler are isolated modules, so they can be swapped.
 
 ## Extending
 

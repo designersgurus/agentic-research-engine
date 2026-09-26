@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     twilio_sms_from: Optional[str] = None
     twilio_whatsapp_from: Optional[str] = None
 
+    # ---- Keep-alive (Render free tier) --------------------------------------
+    keepalive_enabled: bool = True
+    keepalive_interval_seconds: int = 300        # floor of 240 s is enforced in code
+    keepalive_active_hours: str = ""             # e.g. "7-23"; empty = always
+    keepalive_timezone: str = "Asia/Kolkata"
+    keepalive_url: Optional[str] = None          # override; otherwise RENDER_EXTERNAL_URL
+    render_external_url: Optional[str] = None    # set automatically by Render
+
     @property
     def resolved_llm_provider(self) -> str:
         p = self.llm_provider.lower()

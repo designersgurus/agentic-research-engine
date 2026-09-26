@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 from .config import Settings, get_settings
 from .guardrails import validate_public_url
+from .keepalive import KeepAlive
 from .outreach import OutreachService
 from .research import run_research
 from .schemas import CampaignCreate, InboundMessage, Job, JobAccepted, JobCreate, ReplyEvent
@@ -36,11 +37,15 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
     outreach = OutreachService(store, s)
     job_slots = asyncio.Semaphore(s.max_concurrent_jobs)
     scheduler = AsyncIOScheduler(timezone="UTC")
+    keepalive = KeepAlive(s)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if start_scheduler:
             scheduler.add_job(outreach.process_due, "interval", seconds=s.scheduler_tick_seconds, max_instances=1)
+            if keepalive.enabled:
+                scheduler.add_job(keepalive.tick, "interval", seconds=keepalive.interval_s,
+                                  max_instances=1, coalesce=True)
             scheduler.start()
         yield
         if scheduler.running:
@@ -57,6 +62,7 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
         ),
     )
     app.state.settings, app.state.store, app.state.outreach = s, store, outreach
+    app.state.keepalive = keepalive
 
     def require_key(x_api_key: Optional[str] = Header(None)) -> None:
         if s.api_key and not hmac.compare_digest(x_api_key or "", s.api_key):
@@ -67,6 +73,10 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
     async def home():
         return FileResponse(STATIC / "index.html")
 
+    @app.get("/ping", include_in_schema=False)
+    async def ping() -> dict[str, bool]:
+        return {"ok": True}  # deliberately trivial: no DB, no LLM
+
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, Any]:
         return {
@@ -76,6 +86,7 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
             "search": s.resolved_search_provider,
             "outreach_dry_run": s.outreach_dry_run,
             "auth_required": bool(s.api_key),
+            "keepalive": keepalive.status(),
             "caps": {
                 "job_token_budget": s.job_token_budget,
                 "max_llm_calls": s.max_llm_calls,
