@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: agentic-research-engine
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: LLM_PROVIDER
+        value: auto
+      - key: SEARCH_PROVIDER
+        value: auto
+      - key: OUTREACH_DRY_RUN
+        value: "true"
+      - key: JOB_TOKEN_BUDGET
+        value: "30000"
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SERPER_API_KEY
+        sync: false
