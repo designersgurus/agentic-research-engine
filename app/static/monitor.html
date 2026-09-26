@@ -103,7 +103,7 @@ function render(d) {
 }
 
 function chart(history, day) {
-  const W = 600, H = 320, L = 62, R = 10, T = 14, B = 34;
+  const W = 600, H = 320, L = 62, R = 22, T = 14, B = 34;
   const series = Object.values(history);
   const vals = series.flatMap(s => s.prices.filter(p => p !== null));
   const min = Math.floor(Math.min(...vals) / 500) * 500, max = Math.ceil(Math.max(...vals) / 500) * 500;
