@@ -241,6 +241,10 @@ def test_demo_apis(client):
     assert client.post("/demos/api/monitor/check", json={"day": 99}).status_code == 422
 
 
+def test_health_reports_ocr(client):
+    assert "ocr_available" in client.get("/health").json()
+
+
 def test_live_url_scraping_requires_key(client):
     assert client.post("/demos/api/monitor/check-url", json={"url": "https://example.com"}).status_code == 403
 

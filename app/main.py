@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import importlib.util
 import json
 import logging
 import uuid
@@ -135,6 +136,7 @@ def create_app(settings: Optional[Settings] = None, start_scheduler: bool = True
             "outreach_dry_run": s.outreach_dry_run,
             "auth_required": bool(s.api_key),
             "live_mode": live_mode,
+            "ocr_available": importlib.util.find_spec("rapidocr_onnxruntime") is not None,
             "keepalive": keepalive.status(),
             "caps": {
                 "job_token_budget": s.job_token_budget,
